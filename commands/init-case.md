@@ -32,7 +32,6 @@ description: Инициализация нового судебного дела
 ├── raw/
 ├── mirrors/
 ├── analysis/
-├── positions/
 ├── hearings/
 └── history.md
 
@@ -43,11 +42,13 @@ description: Инициализация нового судебного дела
 
 Используй bash для создания директорий:
 ```bash
-mkdir -p .vassal/{raw,mirrors,analysis,positions,hearings}
+mkdir -p .vassal/{raw,mirrors,analysis,hearings}
 mkdir -p "Материалы от клиента"
 mkdir -p "Входящие документы"
 mkdir -p "На удаление"
 ```
+
+Папка `.vassal/positions/` **не создаётся** — позиции по делу хранятся в корне дела (`{ГГГГ-ММ-ДД} {тип} позиция.md`), см. `skills/build-position/SKILL.md`. В предыдущих версиях плагина папка создавалась, но ни один скилл туда не писал; для совместимости со старыми делами `build-position` её игнорирует.
 
 ## 3. Заполни case.yaml
 

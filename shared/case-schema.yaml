@@ -1,25 +1,40 @@
-# Схема case.yaml v2
+# Схема case.yaml v3
 # Этот файл описывает структуру карточки дела.
 # При создании case.yaml через init-case — заполни известные поля, остальные оставь null.
+#
+# Изменения v2 → v3:
+# - Добавлены блоки qualification, jurisdiction (writes: legal-review).
+# - Добавлены блоки appeal, cassation (writes: appeal, cassation).
+# - Расширено множество значений status: добавлены pending_appeal, pending_cassation.
+# - Поля снабжены комментариями `# writes: <скиллы>` — матрица ownership
+#   (см. shared/conventions.md, раздел «Ownership полей case.yaml»).
 
-version: 2
+version: 3
 
 case:
-  number: "А33-12345/2026"         # Номер дела. null если дело ещё не возбуждено.
-  court: "Название суда"            # Полное название суда
-  judge: "ФИО судьи"               # null если неизвестно
-  category: "экономические споры"   # экономические споры | банкротство | административные
-  subject: "Суть спора в 1 предложении"
-  status: active                    # active | suspended | completed | archived
+  number: "А33-12345/2026"         # writes: init-case   | Номер дела. null если дело ещё не возбуждено.
+  court: "Название суда"            # writes: init-case   | Полное название суда
+  judge: "ФИО судьи"               # writes: init-case, analyze-hearing  | null если неизвестно
+  category: "экономические споры"   # writes: init-case   | экономические споры | банкротство | административные
+  subject: "Суть спора в 1 предложении"  # writes: init-case
+  status: active                    # writes: init-case, appeal, cassation, analyze-hearing
+                                    # Допустимые значения:
+                                    #   active             — дело в работе (1 инстанция)
+                                    #   suspended          — приостановлено судом
+                                    #   pending_appeal     — решение вынесено, готовим/подали апелляцию
+                                    #   pending_cassation  — апелляция рассмотрена, готовим/подали кассацию
+                                    #   completed          — судебные акты вступили в силу, исполнено
+                                    #   archived           — дело закрыто и убрано в архив
 
   # Даты
-  filing_date: null                 # Дата подачи иска (ГГГГ-ММ-ДД)
-  next_hearing: null                # Дата следующего заседания
-  next_hearing_source: null         # user | transcript | kad — кто установил дату
+  filing_date: null                 # writes: init-case   | Дата подачи иска (ГГГГ-ММ-ДД)
+  next_hearing: null                # writes: init-case, analyze-hearing  | Дата следующего заседания
+  next_hearing_source: null         # writes: init-case, analyze-hearing  | user | transcript | kad
 
   # Стороны
   # Каждая сторона имеет стабильный party_id для ссылок из других структур.
   # Формат party_id: {role}-{NN}, например plaintiff-01, defendant-01, third-party-01
+  # writes: init-case (структура), legal-review (уточнение реквизитов после анализа документов)
   parties:
     - party_id: "plaintiff-01"
       role: "Истец"                 # Истец | Ответчик | Третье лицо | Заявитель | Заинтересованное лицо
@@ -41,9 +56,10 @@ case:
 
   # Наш клиент — ссылка на party_id
   our_client:
-    party_id: "defendant-01"        # Какая из сторон — наш клиент
+    party_id: "defendant-01"        # writes: init-case   | Какая из сторон — наш клиент
 
   # Представитель (наш юрист)
+  # writes: init-case
   representative:
     name: null                      # ФИО
     short_name: null                # Инициалы: "Я. А. Стригов"
@@ -54,11 +70,31 @@ case:
     email: null
 
   # Суммы
+  # writes: init-case (исходные значения), build-position (уточнение в ходе расчётов)
   amounts:
     claim: null                     # Сумма иска (число)
     court_fee: null                 # Госпошлина (число)
 
+  # Квалификация правоотношений — заполняется на этапе legal-review
+  # writes: legal-review, build-position (может уточнить applicable_norms)
+  # reads: build-position, prepare-hearing, appeal, cassation
+  qualification:
+    relation_type: null             # поставка | подряд | услуги | аренда | заём | неосновательное обогащение | ...
+    applicable_norms: []            # Список ключевых норм: ["ст. 506 ГК", "ст. 711 ГК", "ФЗ о контрактной системе"]
+    qualified_by: null              # agent | user
+    qualified_at: null              # Дата квалификации (ГГГГ-ММ-ДД)
+
+  # Подсудность — заполняется на этапе legal-review
+  # writes: legal-review
+  # reads: build-position, prepare-hearing, appeal, cassation
+  jurisdiction:
+    competent_court: null           # арбитражный | СОЮ | КАС | банкротный
+    territorial_basis: null         # общая | договорная | исключительная | альтернативная
+    correct: null                   # true | false | null — соответствует ли фактическая подсудность правильной
+    prorogation_clause: null        # Текст оговорки о подсудности из договора (или null)
+
   # Досудебный порядок — заполняется на этапе legal-review, не при init-case
+  # writes: legal-review
   pretrial:
     required: null                  # true | false | null
     required_source: null           # user | agent | document
@@ -66,7 +102,35 @@ case:
     complied_source: null           # user | agent
     pretrial_date: null             # Дата направления претензии
 
+  # Апелляционная инстанция — заполняется при вынесении решения и подаче жалобы
+  # writes: appeal (основные поля), analyze-hearing (hearing_date, ruling_date после заседания)
+  # reads: cassation (для расчётов сроков и проверки последовательности)
+  appeal:
+    judgment_issued_date: null      # Дата изготовления решения 1 инстанции в полном объёме
+    deadline: null                  # Расчётный срок подачи жалобы (judgment_issued_date + 1 месяц по АПК)
+    filed_date: null                # Когда фактически подали апелляционную жалобу
+    hearing_date: null              # Дата заседания апелляционной инстанции
+    ruling_date: null               # Дата вынесения постановления апелляции
+    result: null                    # upheld | overturned | modified | dismissed | null
+                                    #   upheld     — решение оставлено без изменения
+                                    #   overturned — отменено
+                                    #   modified   — изменено
+                                    #   dismissed  — производство по жалобе прекращено
+
+  # Кассационная инстанция — симметрично appeal
+  # writes: cassation (основные поля), analyze-hearing (hearing_date, ruling_date)
+  cassation:
+    appeal_ruling_date: null        # Дата вступления в силу постановления апелляции (точка отсчёта срока)
+    deadline: null                  # Расчётный срок подачи кассации (appeal_ruling_date + 2 месяца по АПК)
+    filed_date: null                # Когда подали кассационную жалобу
+    hearing_date: null              # Дата заседания кассационной инстанции
+    ruling_date: null               # Дата вынесения постановления кассации
+    result: null                    # upheld | overturned | modified | dismissed | null
+    instance: null                  # окружной | СКЭС ВС РФ — какая кассация (1 или 2)
+
   # Хронология (пополняется по ходу дела)
+  # writes (append): init-case (создание), analyze-hearing (после заседания),
+  #                  appeal/cassation (подача и результат), legal-review (значимые правовые события)
   timeline:
     - date: null                    # ГГГГ-ММ-ДД
       event: "Описание события"
