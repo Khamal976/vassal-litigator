@@ -254,7 +254,7 @@ description: >
 
 ### Фаза 7 -- Опциональный хук: синхронизация с Notion
 
-27. Если файл `~/.vassal/notion-config.yaml` существует -- предложи Сюзерену:
+27. Если Notion-конфиг существует (путь резолвится по правилам из [shared/conventions.md](../../shared/conventions.md) → «Notion-слой» → «Конфигурация»: `$VASSAL_CONFIG_DIR/notion-config.yaml`, по умолчанию `~/.vassal/notion-config.yaml`) -- предложи Сюзерену:
 > «Обновить стадию дела в Notion? [/vassal-litigator:sync-notion]»
 
 `case.status` сменился на `pending_appeal` -- в дашборде Notion дело должно перейти в колонку «Апелляция». Если конфига нет -- **не предлагать**. См. `skills/notion-sync/SKILL.md` → раздел «Авто-триггеры». Хук не блокирующий.

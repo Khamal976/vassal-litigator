@@ -388,9 +388,19 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 ### Конфигурация
 
-Файл: `~/.vassal/notion-config.yaml` (один на пользователя, не на дело).
+Файл: `$VASSAL_CONFIG_DIR/notion-config.yaml` (один на пользователя, не на дело).
 
-Шаблон -- [scripts/notion-config.example.yaml](../scripts/notion-config.example.yaml). Bootstrap (создание Notion-баз и заполнение конфига) -- разовая операция по инструкции [scripts/notion-init.md](../scripts/notion-init.md).
+**Расположение:**
+- По умолчанию: `~/.vassal/notion-config.yaml`.
+- Переопределение: переменная окружения `VASSAL_CONFIG_DIR`. Если задана -- используется её значение, иначе -- `~/.vassal/`.
+
+Сценарии переопределения -- те же, что у `$VASSAL_GLOBAL_DIR` (см. раздел «Глобальная память»):
+- Хранение в облачном диске для кросс-машинного синка между рабочей и поездочной машинами (важно: на разных Windows-машинах `~` резолвится в разные пути из-за разных имён пользователя; env var с явным OneDrive/Dropbox-путём решает это).
+- Изоляция конфигов разных юристов команды.
+
+Логически `$VASSAL_CONFIG_DIR` и `$VASSAL_GLOBAL_DIR` парные -- обычно ставятся в **одну OneDrive-/Dropbox-папку**, как два соседних подкаталога. Можно и порознь, если нужно (например, конфиг -- локально, а память -- на облаке).
+
+Шаблон конфига -- [scripts/notion-config.example.yaml](../scripts/notion-config.example.yaml). Bootstrap (создание Notion-баз и заполнение конфига) -- разовая операция по инструкции [scripts/notion-init.md](../scripts/notion-init.md).
 
 Токен Notion -- через MCP-auth, в плагине не хранится.
 
@@ -545,7 +555,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 | `tesseract`, `ocrmypdf` (system) | `intake`, `add-evidence`, `add-opponent`, `update-index` | OCR сканированных PDF |
 | `pymupdf`, `python-docx` (Python) | `scripts/extract_text.py` | Извлечение текста из PDF/DOCX |
 | Notion MCP (`notion-search`, `notion-create-pages`, `notion-update-page`, `notion-create-database`) | `notion-sync` | Push метаданных дела и профиля судьи в Notion-базы Cases / Judges (опционально, см. раздел «Notion-слой») |
-| `~/.vassal/notion-config.yaml` (конфиг) | `notion-sync` и хуки в `init-case` / `analyze-hearing` / `appeal` / `cassation` | ID Notion-баз и mapping полей. При отсутствии файла Notion-функционал безопасно отключается (хуки не предлагают синк, ручная команда явно сообщает о ненастроенности) |
+| `$VASSAL_CONFIG_DIR/notion-config.yaml` (по умолчанию `~/.vassal/notion-config.yaml`) | `notion-sync` и хуки в `init-case` / `analyze-hearing` / `appeal` / `cassation` | ID Notion-баз и mapping полей. При отсутствии файла Notion-функционал безопасно отключается (хуки не предлагают синк, ручная команда явно сообщает о ненастроенности). Путь конфигурируется -- см. раздел «Notion-слой» → «Конфигурация» |
 
 Внешние зависимости могут оказаться недоступны: плагин не установлен, версия несовместима, упал процесс. Скилл **не имеет права тихо упасть** — это особенно опасно для `appeal`/`cassation` (жёсткие процессуальные сроки) и `analyze-hearing` (5 дней на замечания на протокол).
 

@@ -1,6 +1,10 @@
 # Bootstrap Notion-слоя для vassal-litigator
 
-Разовая операция: создать в Notion-workspace две базы (`Cases` и `Judges`) со схемой, которую ожидает `skills/notion-sync`, и записать их ID в `~/.vassal/notion-config.yaml`.
+Разовая операция: создать в Notion-workspace две базы (`Cases` и `Judges`) со схемой, которую ожидает `skills/notion-sync`, и записать их ID в файл конфига `notion-config.yaml`.
+
+**Расположение конфига** (правила резолва -- из [shared/conventions.md](../shared/conventions.md) → «Notion-слой» → «Конфигурация»):
+- По умолчанию: `~/.vassal/notion-config.yaml`.
+- Переопределение через `$VASSAL_CONFIG_DIR` -- путь становится `$VASSAL_CONFIG_DIR/notion-config.yaml`. Используется для кросс-машинного синка через OneDrive/Dropbox/etc.
 
 > Это **bootstrap, не sync.** Запускается один раз на установку плагина (или при пересоздании workspace). Регулярная синхронизация -- через `/vassal-litigator:sync-notion`.
 
@@ -57,13 +61,41 @@
 
 ---
 
-## 3. Заполнение `~/.vassal/notion-config.yaml`
+## 3. Заполнение конфига
 
-Создай файл (если не существует):
+### 3.1. Реши, где файл будет жить
 
+**Вариант А -- одна машина (по умолчанию):** `~/.vassal/notion-config.yaml`. Никаких env vars не нужно.
+
+**Вариант Б -- две и более машины с синком через облако (OneDrive/Dropbox/Yandex.Disk):** положи файл в синхронизируемую папку и укажи путь через `$VASSAL_CONFIG_DIR`. Типовая конфигурация на Windows:
+```
+C:\Users\{имя}\OneDrive\Документы\Claude Cowork\.vassal\notion-config.yaml
+```
+плюс на каждой машине:
+```cmd
+setx VASSAL_CONFIG_DIR "C:\Users\{имя}\OneDrive\Документы\Claude Cowork\.vassal"
+```
+(имя пользователя на каждой машине своё; путь до OneDrive-корня от него и зависит).
+
+Это решает проблему: на разных Windows-машинах `~` резолвится в `C:\Users\kholv\` и `C:\Users\другой\` -- два разных места без синхронизации. Явный путь через env var обходит этот разрыв.
+
+**То же относится к `$VASSAL_GLOBAL_DIR`** (путь к глобальной памяти `judges/` + `counterparties/`) -- логически парная переменная, обычно ставится в соседнюю подпапку синхронизируемого корня:
+```cmd
+setx VASSAL_GLOBAL_DIR "C:\Users\{имя}\OneDrive\Документы\Claude Cowork\.vassal-global"
+```
+
+### 3.2. Создай файл
+
+Для варианта А:
 ```bash
 mkdir -p ~/.vassal
 touch ~/.vassal/notion-config.yaml
+```
+
+Для варианта Б (Windows / Git Bash):
+```bash
+mkdir -p "/c/Users/{имя}/OneDrive/Документы/Claude Cowork/.vassal"
+touch "/c/Users/{имя}/OneDrive/Документы/Claude Cowork/.vassal/notion-config.yaml"
 ```
 
 Шаблон содержимого -- в [notion-config.example.yaml](./notion-config.example.yaml). Скопируй и подставь свои `data_source_id`:

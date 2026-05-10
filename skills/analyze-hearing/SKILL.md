@@ -163,7 +163,7 @@ description: >
 
 ### Фаза 6.5 -- Опциональный хук: синхронизация с Notion
 
-13.1. Если файл `~/.vassal/notion-config.yaml` существует -- предложи Сюзерену:
+13.1. Если Notion-конфиг существует (путь резолвится по правилам из [shared/conventions.md](../../shared/conventions.md) → «Notion-слой» → «Конфигурация»: `$VASSAL_CONFIG_DIR/notion-config.yaml`, по умолчанию `~/.vassal/notion-config.yaml`) -- предложи Сюзерену:
 > «Обновить запись дела и судьи в Notion? [/vassal-litigator:sync-notion]»
 
 Особенно полезно после заседания: глобальный профиль судьи дополнен новыми устными паттернами -- Notion-зеркало `Judges` пора обновить, чтобы видеть актуальную картину в дашборде; также мог измениться `case.next_hearing` -- этот sync обновит и его.

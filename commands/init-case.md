@@ -103,7 +103,7 @@ next_bundle_id: 1
 
 ## 7. Опциональный хук: синхронизация с Notion
 
-Если файл `~/.vassal/notion-config.yaml` существует -- предложи Сюзерену:
+Если Notion-конфиг существует (путь резолвится по правилам из `shared/conventions.md` → «Notion-слой» → «Конфигурация»: `$VASSAL_CONFIG_DIR/notion-config.yaml`, по умолчанию `~/.vassal/notion-config.yaml`) -- предложи Сюзерену:
 > «Notion-конфиг настроен. Создать запись о деле в базе `Cases` сразу? [/vassal-litigator:sync-notion]»
 
 Если конфиг не настроен -- **не предлагать** (не навязывать Notion-интеграцию пользователям, которые её не используют). См. `skills/notion-sync/SKILL.md` → раздел «Авто-триггеры».

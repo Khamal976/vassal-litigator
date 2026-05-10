@@ -1,3 +1,18 @@
+## [vassal-litigator] этап 6.1 -- 2026-05-11
+
+### Fixed
+- **Кросс-машинная проблема пути к notion-config.** В этапе 6 путь `~/.vassal/notion-config.yaml` был захардкожен. На Windows `~` резолвится в `C:\Users\{имя}\` -- разные имена пользователей на разных машинах превращали путь в разные физические места без синхронизации. Симметрично проблема существовала бы и для `$VASSAL_GLOBAL_DIR` без env var override (он уже был в этапе 6).
+
+### Added
+- Новая переменная окружения `VASSAL_CONFIG_DIR` -- симметричный близнец `VASSAL_GLOBAL_DIR`. По умолчанию `~/.vassal/`. Если задана -- путь к конфигу становится `$VASSAL_CONFIG_DIR/notion-config.yaml`. Типовой сценарий: положить конфиг в OneDrive/Dropbox/Yandex.Disk-папку, на каждой машине установить env var на её локальный путь -- так на двух Windows-машинах с разными именами пользователей работает один и тот же синкаемый файл.
+
+### Changed
+- `skills/notion-sync/SKILL.md`: Phase 0 шаг 1 -- явный резолв `$VASSAL_CONFIG_DIR` с fallback на `~/.vassal/`. Раздел «Конфигурация» обновлён под новый путь. Постусловия -- упомянут резолв.
+- `commands/sync-notion.md`, `commands/init-case.md`, `skills/analyze-hearing/SKILL.md`, `skills/appeal/SKILL.md`, `skills/cassation/SKILL.md`: хуки и предусловия проверяют конфиг по разрезолвленному пути, а не по жёстко прописанному `~/.vassal/`.
+- `shared/conventions.md`: раздел «Notion-слой» → «Конфигурация» расширен описанием `$VASSAL_CONFIG_DIR`. Таблица «Внешние зависимости» обновлена.
+- `scripts/notion-init.md`: новый раздел 3.1 -- как выбрать вариант хранения конфига (А -- одна машина, Б -- кросс-машинный синк через облако), с готовыми `setx`-командами для Windows.
+- `scripts/notion-config.example.yaml`: header дополнен инструкцией по env var.
+
 ## [vassal-litigator] этап 6 рефакторинга -- 2026-05-10
 
 ### Added

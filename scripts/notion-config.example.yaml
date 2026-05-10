@@ -1,7 +1,14 @@
 # Шаблон конфига Notion-синхронизации для vassal-litigator.
 #
-# Скопируй этот файл в ~/.vassal/notion-config.yaml и подставь свои data_source_id
+# Скопируй этот файл в место хранения конфига и подставь свои data_source_id
 # (получаются после bootstrap по scripts/notion-init.md).
+#
+# Где хранить:
+#   А) Одна машина (по умолчанию): ~/.vassal/notion-config.yaml
+#   Б) Кросс-машинный синк через облако (OneDrive/Dropbox/Yandex.Disk):
+#      положить в синхронизируемую папку и установить env var
+#      VASSAL_CONFIG_DIR на путь к этой папке. Скилл будет читать
+#      $VASSAL_CONFIG_DIR/notion-config.yaml на каждой машине.
 #
 # Файл лежит ОДИН РАЗ на пользователя (не на дело). Все дела одного юриста
 # синкаются в один и тот же Notion-workspace.
