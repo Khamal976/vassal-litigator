@@ -68,7 +68,9 @@ plugins/vassal-litigator/
 │   │   └── SKILL.md
 │   ├── appeal/                    ← Апелляционная жалоба
 │   │   └── SKILL.md
-│   └── cassation/                 ← Кассационная жалоба
+│   ├── cassation/                 ← Кассационная жалоба
+│   │   └── SKILL.md
+│   └── notion-sync/               ← Синхронизация с Notion (Cases + Judges, push)
 │       └── SKILL.md
 ├── commands/
 │   ├── init-case.md               ← Инициализация нового дела
@@ -83,7 +85,8 @@ plugins/vassal-litigator/
 │   ├── analyze-hearing.md         ← /vassal-litigator:analyze-hearing
 │   ├── draft-judgment.md          ← /vassal-litigator:draft-judgment
 │   ├── appeal.md                  ← /vassal-litigator:appeal
-│   └── cassation.md               ← /vassal-litigator:cassation
+│   ├── cassation.md               ← /vassal-litigator:cassation
+│   └── sync-notion.md             ← /vassal-litigator:sync-notion (опц., требует ~/.vassal/notion-config.yaml)
 ├── shared/
 │   ├── case-schema.yaml            ← JSON Schema для case.yaml
 │   ├── index-schema.yaml           ← JSON Schema для index.yaml
@@ -94,7 +97,9 @@ plugins/vassal-litigator/
 │   ├── extract_text.py             ← Извлечение текста из PDF/DOCX/изображений
 │   ├── create_mirror.py            ← Создание md-зеркала
 │   ├── update_index.py             ← Обновление index.yaml
-│   └── generate_table.py           ← Генерация xlsx-таблицы из индекса
+│   ├── generate_table.py           ← Генерация xlsx-таблицы из индекса
+│   ├── notion-init.md              ← Bootstrap-инструкция для Notion-слоя (разовая)
+│   └── notion-config.example.yaml  ← Шаблон ~/.vassal/notion-config.yaml
 └── CHANGELOG.md
 ```
 
@@ -914,6 +919,13 @@ add-opponent            │
 
 **Циклические:** add-evidence, add-opponent, update-index, prepare-hearing, analyze-hearing — вызываются многократно по ходу дела.
 
+**Глобальная память (кросс-дельная)** -- ортогональный слой, общий для всех дел (см. раздел 15). Основные потоки данных через неё:
+- `analyze-hearing`, `draft-judgment` → `$VASSAL_GLOBAL_DIR/judges/` (двойная запись профиля судьи).
+- `add-opponent`, `analyze-hearing` → `$VASSAL_GLOBAL_DIR/counterparties/` (двойная запись профиля оппонента).
+- `prepare-hearing`, `build-position`, `appeal`, `cassation`, `analyze-hearing`, `draft-judgment` ← читают глобальные профили **до** анализа как фон.
+
+**Notion-слой (опционально)** -- если настроен `~/.vassal/notion-config.yaml`, скилл `notion-sync` (вызывается вручную через `/vassal-litigator:sync-notion` или предлагается хуками после `init-case` / `analyze-hearing` / `appeal` / `cassation`) пушит метаданные дела и глобальный профиль судьи в Notion-базы `Cases` и `Judges`. Односторонне, без обратного синка. См. раздел 15.7 и [skills/notion-sync/SKILL.md](skills/notion-sync/SKILL.md).
+
 ---
 
 ## 10. Интеграция с arbitrum-docx
@@ -1021,3 +1033,66 @@ add-opponent            │
 | 6 | Конфиденциальность | Всё хранится локально на машине юриста, обезличивание не требуется. |
 | 7 | MCP-сервер OCR | После MVP. Сейчас: скрипт tesseract/ocrmypdf (Level 1) + LLM-фолбэк (Level 3). MCP OCR — отдельный проект на будущее. |
 | 8 | Контракт с arbitrum-docx | Не нужен. arbitrum-docx — зависимость-скилл, Claude комбинирует инструкции обоих SKILL.md в рантайме (см. раздел 10). |
+
+---
+
+## 15. Кросс-дельная память (глобальное хранилище)
+
+**Проблема, которую закрывает.** До этапа 6 ценные кросс-дельные наблюдения (профиль судьи, паттерны оппонента) хранились внутри одного дела:
+- 5 дел у судьи Иванова → 5 пустых стартовых `judge-profile.md`, ни один не знает про остальных.
+- Тот же оппонент в трёх делах → три отдельных экспресс-анализа в трёх `.vassal/`, четвёртое дело снова с нуля.
+
+**Решение.** Глобальное хранилище `~/.vassal-global/` (с переопределением через `$VASSAL_GLOBAL_DIR`). Скиллы пишут в **два места одновременно** (локальный файл дела + глобальный файл), и читают глобальный профиль до анализа.
+
+Полные правила -- в [shared/conventions.md](shared/conventions.md) → раздел «Глобальная память (кросс-дельная)».
+
+### 15.1. Структура хранилища
+
+```
+$VASSAL_GLOBAL_DIR/                              # по умолчанию ~/.vassal-global/
+├── judges/
+│   └── {ФИО-slug}--{court-slug}.md             # один файл на пару (судья × суд)
+├── counterparties/
+│   ├── inn-{ИНН}.md                            # для юрлиц с ИНН
+│   └── noinn-{slug-name}.md                    # fallback для физлиц / без ИНН
+└── README.md                                    # опционально
+```
+
+`templates/` -- зарезервирована, вне scope этапа 6 (наполняется вручную в этапе 7).
+
+### 15.2. Кто пишет, кто читает
+
+| Файл | Пишет (двойная запись) | Читает (фон до анализа) |
+|---|---|---|
+| `judges/{judge}--{court}.md` | `analyze-hearing` (устные паттерны), `draft-judgment` (письменный стиль) | `analyze-hearing`, `draft-judgment`, `prepare-hearing`, `appeal`, `cassation` |
+| `counterparties/{key}.md` | `add-opponent` (письменные паттерны), `analyze-hearing` (устные паттерны) | `add-opponent`, `prepare-hearing`, `build-position`, `appeal`, `cassation` |
+
+### 15.3. Двойная запись и обратные ссылки
+
+- **Локальный файл** в `.vassal/` дела (`judge-profile.md`, `opponent-filing-*.md`, `opponent-hearing-*.md`) -- наблюдения только этого дела, привязка к конкретным `[doc-NNN]`.
+- **Глобальный файл** -- агрегированные наблюдения по всем делам Сюзерена с этой парой/сущностью; каждое наблюдение помечено `(дело {номер}, {дата})`.
+- Локальный связан с глобальным через `shared_profile:` во frontmatter -- путь относительно `$VASSAL_GLOBAL_DIR`.
+
+### 15.4. Правило накопления (аппенд-only)
+
+- Новые наблюдения **дописываются** в соответствующий раздел.
+- Старые **никогда не удаляются и не редактируются**, даже если новое им противоречит -- противоречие добавляется как «уточнение» с новой датой.
+- Счётчики (`hearings_total`, `written_decisions_total`, `filings_analyzed`, `hearings_analyzed`) инкрементируются ровно на число добавленных в запуске.
+- Список `cases:` пополняется без дублей по номеру.
+- `last_updated` и `last_case` обновляются.
+
+### 15.5. Конфигурируемый путь
+
+- По умолчанию: `~/.vassal-global/`.
+- Переопределение через `$VASSAL_GLOBAL_DIR`.
+- Сценарии переопределения:
+  - Хранение в облачном диске (Яндекс.Диск / Dropbox / OneDrive) -- кросс-машинный синк между рабочей и поездочной машинами.
+  - Изоляция глобальной памяти разных юристов команды на одной рабочей станции.
+
+### 15.6. Конфиденциальность
+
+Глобальная память -- **производная аналитика**, не копия документов. Допустимо: паттерны судьи, типовые формулировки оппонента, статистика, ФИО представителей, ИНН/ОГРН (публичные). Недопустимо: тексты документов клиентов, конкретные суммы по делам, чувствительные ПДн третьих лиц без необходимости.
+
+### 15.7. Связь с Notion-слоем
+
+Глобальная память -- **локальный** аналог баз `Judges` и `Counterparties` Notion-слоя. После настройки Notion (этап 6 п.23, см. ниже) данные синхронизируются в Notion для дашборда и более удобного UX, но локальная папка остаётся **источником правды** -- Notion получает push односторонне (см. раздел «Notion-слой» в conventions и [NOTION-INTEGRATION-PROPOSAL.md](NOTION-INTEGRATION-PROPOSAL.md)).

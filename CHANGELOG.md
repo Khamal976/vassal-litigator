@@ -1,3 +1,32 @@
+## [vassal-litigator] этап 6 рефакторинга -- 2026-05-10
+
+### Added
+- Кросс-дельная память (`$VASSAL_GLOBAL_DIR/`, по умолчанию `~/.vassal-global/`):
+  - `judges/{ФИО-slug}--{court-slug}.md` -- накопительный профиль судьи по всем делам Сюзерена с этой парой (судья × суд). Двойная запись из `analyze-hearing` (устные паттерны) и `draft-judgment` (письменный стиль). Аппенд-only с маркерами `(дело {номер}, {дата})`.
+  - `counterparties/inn-{ИНН}.md` (или `noinn-{slug}.md`) -- накопительный профиль оппонента по всем делам с ним. Двойная запись из `add-opponent` (письменные паттерны) и `analyze-hearing` (устные). Те же правила накопления.
+  - Конфигурируемый путь через переменную `VASSAL_GLOBAL_DIR` -- сценарий синка между машинами через облачный диск.
+  - Фиксация в `shared/conventions.md` → раздел «Глобальная память (кросс-дельная)»; в `ARCHITECTURE.md` → раздел 15.
+- Notion-слой MVP (опционально):
+  - `skills/notion-sync/SKILL.md` -- односторонний push в две Notion-базы (Cases + Judges), idempotent upsert, dedup по `case.number` / `slug`, `fields_manual_only` для ручных полей юриста.
+  - `commands/sync-notion.md` -- ручной триггер `/vassal-litigator:sync-notion` с флагами `--dry-run`, `--force`.
+  - `scripts/notion-init.md` + `scripts/notion-config.example.yaml` -- bootstrap-инструкция (разовая) и шаблон `~/.vassal/notion-config.yaml`.
+  - Опциональные не-блокирующие хуки в `init-case`, `analyze-hearing`, `appeal`, `cassation` -- предлагают синк только при наличии конфига.
+
+### Changed
+- `analyze-hearing/SKILL.md`: Phase 1 шаг 3.1 -- чтение глобального профиля судьи; Phase 6 шаги 10.1-10.2 -- двойная запись в `$VASSAL_GLOBAL_DIR/judges/` и `counterparties/`. Новый раздел «Формат глобального профиля судьи». Локальный `judge-profile.md` теперь содержит во frontmatter `shared_profile:`.
+- `draft-judgment/SKILL.md`: Phase 1 шаг 5.1 -- чтение глобального профиля; Phase 2 шаг 9 -- двойная запись (раздел 7 «Письменный стиль решений») в глобальный.
+- `add-opponent/SKILL.md`: Phase 1 шаг 2.1 -- чтение глобального профиля оппонента; Phase 4 шаг 19 -- двойная запись в `$VASSAL_GLOBAL_DIR/counterparties/`. Новый раздел «Формат глобального профиля оппонента».
+- `prepare-hearing/SKILL.md`: Phase 1 шаг 3.1 -- чтение обоих глобальных профилей (судья + оппонент). Раздел «Работа с профилем судьи» расширен под три источника по приоритету.
+- `build-position/SKILL.md`: Phase 1 шаг 4.1 -- чтение глобального оппонента. Блок «Прогноз аргументов оппонента» -- учёт повторяющихся доводов из прошлых дел.
+- `appeal/SKILL.md`: Phase 1 шаг 9.1 -- чтение обоих глобальных профилей. Phase 7 -- хук Notion.
+- `cassation/SKILL.md`: Phase 1 шаг 8.1 -- чтение обоих глобальных профилей; red team-субагент использует профиль оппонента. Phase 7 -- хук Notion.
+- `shared/conventions.md`: новые разделы «Глобальная память (кросс-дельная)» и «Notion-слой»; таблица «Внешние зависимости» дополнена Notion MCP и notion-config.yaml.
+- `shared/case-schema.yaml`: уточнено использование `parties[].inn`/`ogrn` как ключа дедупликации для глобальной памяти.
+- `commands/init-case.md`: шаг 7 -- опциональный хук Notion.
+- `ARCHITECTURE.md`: раздел 2 -- добавлены `notion-sync` и `notion-init.md`/`notion-config.example.yaml`; раздел 9 -- ортогональный слой глобальной памяти и опциональный Notion-слой; **новый раздел 15** -- «Кросс-дельная память».
+
+Закрывает п.22-23 этапа 6 из FINAL-REPORT.md и антипаттерн §3.10 «Изоляция кросс-дельной памяти».
+
 ## [vassal-litigator] v0.4.0 -- 2026-03-27
 
 ### Added

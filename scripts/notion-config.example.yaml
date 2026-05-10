@@ -1,0 +1,67 @@
+# Шаблон конфига Notion-синхронизации для vassal-litigator.
+#
+# Скопируй этот файл в ~/.vassal/notion-config.yaml и подставь свои data_source_id
+# (получаются после bootstrap по scripts/notion-init.md).
+#
+# Файл лежит ОДИН РАЗ на пользователя (не на дело). Все дела одного юриста
+# синкаются в один и тот же Notion-workspace.
+
+notion:
+  # Опциональное поле -- ID workspace для фильтров views.
+  # Можно оставить пустым, если все базы в одном workspace.
+  workspace_id: null
+
+  # ID data source каждой базы (получаются из ответа MCP-tool notion-create-database
+  # в теге <data-source>, либо из URL базы в Notion -- последняя часть UUID).
+  databases:
+    cases: "REPLACE-WITH-CASES-DATA-SOURCE-ID"
+    judges: "REPLACE-WITH-JUDGES-DATA-SOURCE-ID"
+    # Зарезервировано на будущее (вне MVP этапа 6):
+    # counterparties: "..."
+    # hearings: "..."
+    # deadlines: "..."
+    # templates: "..."
+
+  # Поля, которые юрист правит ВРУЧНУЮ в Notion и которые sync НЕ перезаписывает.
+  # Список property-имён по каждой базе.
+  fields_manual_only:
+    cases:
+      - "Статус"            # won/lost/active/paused/closed -- ручное решение юриста
+    judges: []              # все поля Judges -- автогенерируемые из глобального профиля
+
+  # Маппинг внутренних имён vassal-litigator → имена property в Notion.
+  # Если в Notion поля переименованы (например, "Номер дела" → "Case number"),
+  # измени значения справа. Ключи слева не трогать.
+  fields_map:
+    cases:
+      title: "Номер дела"
+      court: "Суд"
+      our_client: "Наш клиент"
+      plaintiff: "Истец"
+      defendant: "Ответчик"
+      our_role: "Наша роль"
+      stage: "Стадия"
+      status_manual: "Статус"
+      next_hearing: "Следующее заседание"
+      judge_relation: "Судья"
+      folder_url: "Путь к папке"
+      last_sync: "Last sync"
+    judges:
+      title: "ФИО"
+      court: "Суд"
+      slug: "slug"
+      style: "Стиль"
+      patterns: "Паттерны"
+      tendencies: "Склонности"
+      cases_count: "Дел с ним"
+      last_sync: "Last sync"
+
+  # Опционально: владелец дел (для команды из нескольких юристов на одной workspace).
+  # Если указано -- передаётся как property в обе базы для фильтрации views.
+  # Если null -- однопользовательский режим.
+  owner: null
+
+  # Опционально: глобальный rate-limit для batch-операций (например, backfill из 50+ дел).
+  # В обычном sync (одно дело) не используется.
+  rate_limit:
+    requests_per_second: 1

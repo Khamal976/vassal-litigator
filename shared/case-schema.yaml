@@ -8,6 +8,10 @@
 # - Расширено множество значений status: добавлены pending_appeal, pending_cassation.
 # - Поля снабжены комментариями `# writes: <скиллы>` — матрица ownership
 #   (см. shared/conventions.md, раздел «Ownership полей case.yaml»).
+# - Уточнено использование parties[].inn / parties[].ogrn как ключа дедупликации
+#   для глобальной памяти (см. shared/conventions.md, раздел «Глобальная память (кросс-дельная)»):
+#   add-opponent читает inn оппонента и пишет наблюдения в $VASSAL_GLOBAL_DIR/counterparties/inn-{ИНН}.md.
+#   При отсутствии inn используется fallback noinn-{slug-name}.md, точность дедупликации падает.
 
 version: 3
 
@@ -35,13 +39,20 @@ case:
   # Каждая сторона имеет стабильный party_id для ссылок из других структур.
   # Формат party_id: {role}-{NN}, например plaintiff-01, defendant-01, third-party-01
   # writes: init-case (структура), legal-review (уточнение реквизитов после анализа документов)
+  #
+  # ВАЖНО для оппонента (роль ≠ роли our_client):
+  # - inn/ogrn -- ключ дедупликации в глобальной памяти $VASSAL_GLOBAL_DIR/counterparties/.
+  # - Если inn известен (даже из шапки иска / отзыва) -- заполнить ОБЯЗАТЕЛЬНО при init-case
+  #   или дополнить через legal-review после анализа документов оппонента.
+  # - Без inn add-opponent использует fallback noinn-{slug-name}.md, что снижает точность
+  #   кросс-дельного матчинга (омонимы, разные правописания одного контрагента).
   parties:
     - party_id: "plaintiff-01"
       role: "Истец"                 # Истец | Ответчик | Третье лицо | Заявитель | Заинтересованное лицо
       name: "Полное наименование"
       short_name: "Краткое"
-      inn: null                     # ИНН (10 или 12 цифр)
-      ogrn: null                    # ОГРН (13 или 15 цифр)
+      inn: null                     # ИНН (10 или 12 цифр) -- для оппонента ключ глобальной памяти, см. выше
+      ogrn: null                    # ОГРН (13 или 15 цифр) -- доп. идентификатор
       address: null                 # Юридический адрес
       representative: null          # ФИО представителя стороны
 
@@ -49,7 +60,7 @@ case:
       role: "Ответчик"
       name: "Полное наименование"
       short_name: "Краткое"
-      inn: null
+      inn: null                     # ИНН -- ключ глобальной памяти для оппонента
       ogrn: null
       address: null
       representative: null
