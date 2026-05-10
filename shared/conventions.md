@@ -400,6 +400,8 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 Логически `$VASSAL_CONFIG_DIR` и `$VASSAL_GLOBAL_DIR` парные -- обычно ставятся в **одну OneDrive-/Dropbox-папку**, как два соседних подкаталога. Можно и порознь, если нужно (например, конфиг -- локально, а память -- на облаке).
 
+**На Windows для кросс-машинного синка** рекомендуется `REG_EXPAND_SZ` со встроенной переменной `%OneDrive%` -- одно значение работает на всех машинах одного юзера, Windows подставит профиль. Точная команда -- в [scripts/notion-init.md](../scripts/notion-init.md) → §3.1. Это ключевая деталь: `setx` создаёт `REG_SZ` без раскрытия `%VAR%`, поэтому `setx` для кросс-машинной конфигурации не подходит -- нужен `reg add /t REG_EXPAND_SZ`.
+
 Шаблон конфига -- [scripts/notion-config.example.yaml](../scripts/notion-config.example.yaml). Bootstrap (создание Notion-баз и заполнение конфига) -- разовая операция по инструкции [scripts/notion-init.md](../scripts/notion-init.md).
 
 Токен Notion -- через MCP-auth, в плагине не хранится.

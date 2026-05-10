@@ -10,8 +10,12 @@
 - `skills/notion-sync/SKILL.md`: Phase 0 шаг 1 -- явный резолв `$VASSAL_CONFIG_DIR` с fallback на `~/.vassal/`. Раздел «Конфигурация» обновлён под новый путь. Постусловия -- упомянут резолв.
 - `commands/sync-notion.md`, `commands/init-case.md`, `skills/analyze-hearing/SKILL.md`, `skills/appeal/SKILL.md`, `skills/cassation/SKILL.md`: хуки и предусловия проверяют конфиг по разрезолвленному пути, а не по жёстко прописанному `~/.vassal/`.
 - `shared/conventions.md`: раздел «Notion-слой» → «Конфигурация» расширен описанием `$VASSAL_CONFIG_DIR`. Таблица «Внешние зависимости» обновлена.
-- `scripts/notion-init.md`: новый раздел 3.1 -- как выбрать вариант хранения конфига (А -- одна машина, Б -- кросс-машинный синк через облако), с готовыми `setx`-командами для Windows.
+- `scripts/notion-init.md`: расширенный раздел 3.1 -- два варианта хранения (А -- одна машина с `~/.vassal/`; Б -- кросс-машинный синк через `reg add /t REG_EXPAND_SZ` с встроенной Windows-переменной `%OneDrive%`); готовые команды; альтернативы (`%USERPROFILE%\OneDrive`, жёсткий путь через `setx`).
 - `scripts/notion-config.example.yaml`: header дополнен инструкцией по env var.
+- `shared/conventions.md`: подсказка по `REG_EXPAND_SZ` для Windows -- ключевая деталь: `setx` создаёт `REG_SZ` без раскрытия `%VAR%`, поэтому для кросс-машинной конфигурации не годится; нужен `reg add /t REG_EXPAND_SZ`.
+
+### Note about Windows `reg add` vs `setx`
+Изначально в этой же ветке предлагалось использовать `setx VASSAL_*_DIR "C:\Users\{имя}\OneDrive\..."`, что требовало знать имя пользователя на каждой машине. Лучшее решение -- `reg add /t REG_EXPAND_SZ /d "%OneDrive%\Документы\Claude Cowork\.vassal-..."`: значение хранится **с литералом `%OneDrive%`**, а Windows раскрывает его под каждого пользователя при создании нового процесса. Одна команда, два разных результата на двух машинах. См. `scripts/notion-init.md` §3.1 для готовых команд.
 
 ## [vassal-litigator] этап 6 рефакторинга -- 2026-05-10
 
