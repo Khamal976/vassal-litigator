@@ -357,7 +357,7 @@ last_case: "А33-67890/2026"
 
 ## Notion-слой (опциональная одностороння синхронизация)
 
-**Принцип:** Notion -- **зеркало**, не источник правды. Скилл `notion-sync` ([skills/notion-sync/SKILL.md](../skills/notion-sync/SKILL.md)) выполняет односторонний push метаданных дела (`case.yaml`) и глобального профиля судьи (`$VASSAL_GLOBAL_DIR/judges/`) в две Notion-базы (`Cases`, `Judges`). Это даёт юристу единый дашборд по всем делам и кросс-дельную видимость (которая локально лежит в глобальной памяти, но в Notion удобнее просматривать).
+**Принцип:** Notion -- **зеркало**, не источник правды. Скилл `notion-sync` ([skills/notion-sync/SKILL.md](../skills/notion-sync/SKILL.md)) выполняет односторонний push метаданных дела (`case.yaml`), глобального профиля судьи (`$VASSAL_GLOBAL_DIR/judges/`) и (опционально, этап 6.2b) глобальных профилей оппонентов (`$VASSAL_GLOBAL_DIR/counterparties/`) в Notion-базы `Cases`, `Judges`, `Counterparties`. Это даёт юристу единый дашборд по всем делам и кросс-дельную видимость (которая локально лежит в глобальной памяти, но в Notion удобнее просматривать).
 
 Notion-слой -- **опциональный**. Плагин полностью работоспособен без него. Если конфиг `~/.vassal/notion-config.yaml` отсутствует -- авто-хуки в `init-case`, `analyze-hearing`, `appeal`, `cassation` не предлагают синк, ручная команда `/vassal-litigator:sync-notion` явно сообщает о ненастроенности.
 
@@ -367,11 +367,11 @@ Notion-слой -- **опциональный**. Плагин полностью
 |---|---|---|
 | Метаданные дела (номер, стороны, суд, наш клиент, стадия, следующее заседание) | ✅ | Дашборд |
 | Профиль судьи (стиль, паттерны, склонности, кол-во дел) | ✅ | Кросс-дельная память + дашборд |
+| Профили оппонентов (`$VASSAL_GLOBAL_DIR/counterparties/`) -- сжатые поля «Типовые доводы», «Тактика», «Представители» | ✅ (опционально, этап 6.2b) | Кросс-дельная память + дашборд; активируется, если `notion.databases.counterparties` задана в конфиге |
 | Тексты документов / md-зеркала | ❌ | Конфиденциальность + объём |
 | Позиции (`*позиция.md`) | ❌ | Стратегия -- самое чувствительное |
 | `.vassal/analysis/*` | ❌ | Оценки рисков, слабостей |
 | Транскрипции заседаний | ❌ | Чувствительно |
-| Профили оппонентов (`$VASSAL_GLOBAL_DIR/counterparties/`) | ❌ (вне MVP) | Зарезервировано на расширение -- база `Counterparties` появится в этапе 7+ |
 
 Полная матрица -- в [NOTION-INTEGRATION-PROPOSAL.md](../NOTION-INTEGRATION-PROPOSAL.md) §3.
 
@@ -410,6 +410,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 - **Cases**: dedup по `case.number`. Дело без номера -- временный ключ `temp-{slug}` (миграция при появлении номера -- зона расширения).
 - **Judges**: dedup по `slug` глобального профиля (или `ФИО+Суд` если глобального профиля нет).
+- **Counterparties** (если активна): dedup по `slug` (`inn-{ИНН}` или `noinn-{slug-name}` -- тот же ключ, что в файле локальной памяти). Fallback'и: ИНН, TITLE `Организация`. Теневой дубль (`inn-*` + `noinn-*` одновременно в локальной памяти) синкается **только в каноническую запись**, см. [skills/add-opponent/SKILL.md](../skills/add-opponent/SKILL.md) → «Дедуп оппонента: inn-/noinn- теневой дубль».
 - При двух последовательных запусках на одно дело -- update, не дубль.
 
 ### Опция `--private-case`
@@ -420,7 +421,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 - `~/.vassal/notion-config.yaml` прочитан и валиден ИЛИ скилл вышел с явным предупреждением (без изменений).
 - Notion MCP проверен на доступность (через короткий probe-запрос) ИЛИ зафиксировано в `.vassal/notion-sync.log` как недоступный.
-- При успешном синке: запись в `Cases` создана/обновлена ровно одна; запись в `Judges` -- ровно одна (если `case.judge` не null); relation `Cases.Судья → Judges` установлена; поля из `fields_manual_only` не перезаписаны.
+- При успешном синке: запись в `Cases` создана/обновлена ровно одна; запись в `Judges` -- ровно одна (если `case.judge` не null); записи в `Counterparties` -- по одной на каждого оппонента из `case.parties` (если `notion.databases.counterparties` активна и оппоненты есть); relation `Cases.Судья → Judges` и `Cases.Оппонент → Counterparties` установлены; поля из `fields_manual_only` не перезаписаны.
 - `.vassal/notion-sync.log` обновлён (timestamp + что синкалось + статус OK/PARTIAL/FAIL).
 - `.vassal/history.md` обновлён.
 
@@ -556,7 +557,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 | `xlsx`-скилл / `openpyxl` | `catalog` | Генерация `Таблица документов.xlsx` |
 | `tesseract`, `ocrmypdf` (system) | `intake`, `add-evidence`, `add-opponent`, `update-index` | OCR сканированных PDF |
 | `pymupdf`, `python-docx` (Python) | `scripts/extract_text.py` | Извлечение текста из PDF/DOCX |
-| Notion MCP (`notion-search`, `notion-create-pages`, `notion-update-page`, `notion-create-database`) | `notion-sync` | Push метаданных дела и профиля судьи в Notion-базы Cases / Judges (опционально, см. раздел «Notion-слой») |
+| Notion MCP (`notion-search`, `notion-create-pages`, `notion-update-page`, `notion-create-database`, `notion-update-data-source`) | `notion-sync` | Push метаданных дела, профиля судьи и (опционально, этап 6.2b) профилей оппонентов в Notion-базы Cases / Judges / Counterparties (опционально, см. раздел «Notion-слой») |
 | `$VASSAL_CONFIG_DIR/notion-config.yaml` (по умолчанию `~/.vassal/notion-config.yaml`) | `notion-sync` и хуки в `init-case` / `analyze-hearing` / `appeal` / `cassation` | ID Notion-баз и mapping полей. При отсутствии файла Notion-функционал безопасно отключается (хуки не предлагают синк, ручная команда явно сообщает о ненастроенности). Путь конфигурируется -- см. раздел «Notion-слой» → «Конфигурация» |
 
 Внешние зависимости могут оказаться недоступны: плагин не установлен, версия несовместима, упал процесс. Скилл **не имеет права тихо упасть** — это особенно опасно для `appeal`/`cassation` (жёсткие процессуальные сроки) и `analyze-hearing` (5 дней на замечания на протокол).

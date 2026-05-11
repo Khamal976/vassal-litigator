@@ -21,32 +21,15 @@
 
 ---
 
-## 1. Создание базы `Cases`
+## Порядок создания
 
-Через MCP-tool `notion-create-database`. Передать:
-
-```json
-{
-  "title": "Cases (vassal-litigator)",
-  "description": "Реестр всех дел, синхронизируется из локального .vassal/case.yaml каждого дела",
-  "parent": { "type": "page_id", "page_id": "<id-родительской-страницы>" },
-  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Исполнение':green, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
-}
-```
-
-**Важно:**
-- `<id-родительской-страницы>` -- ID из шага 0 (для варианта А -- параметр `parent` можно опустить).
-- `<judges-data-source-id>` -- появится **после** создания базы Judges (см. шаг 2). На этом шаге вместо relation создай заглушку: убери `\"Судья\" RELATION(...)` из CREATE TABLE и добавь её отдельно через `notion-update-data-source` после создания Judges.
-
-Альтернативный порядок (рекомендуется): сначала создать Judges (шаг 2), получить её `data_source_id`, потом создать Cases уже с правильным relation.
-
-После создания запиши `data_source_id` из `<data-source>` тега ответа -- это ID, который пойдёт в `notion-config.yaml: notion.databases.cases`.
+Cases ссылается на Judges и (с этапа 6.2b) на Counterparties через RELATION. Чтобы избежать заглушек, **рекомендуемый порядок**: 1. Judges → 2. Counterparties → 3. Cases (Cases создаётся последним со всеми relation-id, готовыми из шагов 1-2). Если у тебя bootstrap старой установки (до 6.2b) и Counterparties не нужна -- пропусти шаг 2 (Counterparties), и в DDL Cases уберёт ссылку `Оппонент`.
 
 ---
 
-## 2. Создание базы `Judges`
+## 1. Создание базы `Judges`
 
-Через `notion-create-database`:
+Через MCP-tool `notion-create-database`:
 
 ```json
 {
@@ -61,9 +44,50 @@
 
 ---
 
-## 3. Заполнение конфига
+## 2. Создание базы `Counterparties` (этап 6.2b, опционально)
 
-### 3.1. Реши, где файл будет жить
+Через `notion-create-database`. Если не хочешь использовать Counterparties-слой -- пропусти этот шаг.
+
+```json
+{
+  "title": "Counterparties (vassal-litigator)",
+  "description": "Профили процессуальных оппонентов, агрегируются из $VASSAL_GLOBAL_DIR/counterparties/ всех дел",
+  "parent": { "type": "page_id", "page_id": "<id-родительской-страницы>" },
+  "schema": "CREATE TABLE (\"Организация\" TITLE, \"ИНН\" RICH_TEXT, \"ОГРН\" RICH_TEXT, \"slug\" RICH_TEXT COMMENT 'Технический ключ -- inn-{ИНН} или noinn-{slug-name}', \"Типовые доводы\" RICH_TEXT COMMENT 'Сжатый § 1 глобального профиля', \"Тактика\" RICH_TEXT COMMENT 'Сжатый § 2 глобального профиля', \"Представители\" RICH_TEXT COMMENT 'ФИО + годы активности', \"Дел с ним\" NUMBER, \"Last sync\" DATE)"
+}
+```
+
+**Важно:** обратная relation `Дела` (Counterparties → Cases) на этом шаге не создаётся -- она появится автоматически как dual, когда в Cases будет создано поле `Оппонент` со ссылкой сюда (шаг 3).
+
+Запиши `data_source_id` -- пойдёт в `notion-config.yaml: notion.databases.counterparties`.
+
+---
+
+## 3. Создание базы `Cases`
+
+Через MCP-tool `notion-create-database`. Передать:
+
+```json
+{
+  "title": "Cases (vassal-litigator)",
+  "description": "Реестр всех дел, синхронизируется из локального .vassal/case.yaml каждого дела",
+  "parent": { "type": "page_id", "page_id": "<id-родительской-страницы>" },
+  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Исполнение':green, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Оппонент\" RELATION('<counterparties-data-source-id>') COMMENT 'Опционально -- убрать если шаг 2 пропущен', \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
+}
+```
+
+**Важно:**
+- `<id-родительской-страницы>` -- ID из шага 0 (для варианта А -- параметр `parent` можно опустить).
+- `<judges-data-source-id>` -- из ответа шага 1.
+- `<counterparties-data-source-id>` -- из ответа шага 2. Если шаг 2 был пропущен -- убери `\"Оппонент\" RELATION(...)` из CREATE TABLE; это поле можно добавить позже через `notion-update-data-source` (см. также «Миграция этапа 6.2 → 6.2b» в разделе 7).
+
+После создания запиши `data_source_id` из `<data-source>` тега ответа -- это ID, который пойдёт в `notion-config.yaml: notion.databases.cases`.
+
+---
+
+## 4. Заполнение конфига
+
+### 4.1. Реши, где файл будет жить
 
 **Вариант А -- одна машина (по умолчанию):** `~/.vassal/notion-config.yaml`. Никаких env vars не нужно.
 
@@ -94,7 +118,7 @@ reg query HKCU\Environment /v VASSAL_GLOBAL_DIR
 ```
 Должно вывести `REG_EXPAND_SZ` и значение с `%OneDrive%` (без раскрытия).
 
-### 3.2. Создай файл
+### 4.2. Создай файл
 
 Для варианта А:
 ```bash
@@ -114,8 +138,9 @@ touch "/c/Users/{имя}/OneDrive/Документы/Claude Cowork/.vassal/notio
 notion:
   workspace_id: "<id-workspace-если-нужно-для-фильтров>"   # опционально
   databases:
-    cases: "<data-source-id-из-шага-1>"
-    judges: "<data-source-id-из-шага-2>"
+    judges: "<data-source-id-из-шага-1>"
+    counterparties: "<data-source-id-из-шага-2>"   # опционально, удали если шаг 2 пропущен
+    cases: "<data-source-id-из-шага-3>"
   fields_manual_only:
     cases:
       - "Статус"           # юрист правит won/lost вручную, sync не трогает
@@ -130,6 +155,7 @@ notion:
       stage: "Стадия"
       next_hearing: "Следующее заседание"
       judge_relation: "Судья"
+      opponent_relation: "Оппонент"
       folder_url: "Путь к папке"
       last_sync: "Last sync"
     judges:
@@ -141,17 +167,27 @@ notion:
       tendencies: "Склонности"
       cases_count: "Дел с ним"
       last_sync: "Last sync"
+    counterparties:
+      title: "Организация"
+      inn: "ИНН"
+      ogrn: "ОГРН"
+      slug: "slug"
+      typical_arguments: "Типовые доводы"
+      tactics: "Тактика"
+      representatives: "Представители"
+      cases_count: "Дел с ним"
+      last_sync: "Last sync"
 ```
 
 **Опционально (для команд из нескольких юристов):**
 ```yaml
 notion:
-  owner: "Стригов Я. А."   # передаётся как property в обе базы для фильтрации в views
+  owner: "Стригов Я. А."   # передаётся как property во все базы для фильтрации в views
 ```
 
 ---
 
-## 4. Проверка
+## 5. Проверка
 
 Запусти `/vassal-litigator:sync-notion --dry-run` в каком-нибудь существующем деле:
 - Скилл должен прочитать конфиг, прочитать `case.yaml`, собрать properties и **показать** их Сюзерену без upsert в Notion.
@@ -160,15 +196,18 @@ notion:
 
 ---
 
-## 5. Что делать, если bootstrap прошёл с ошибкой
+## 6. Что делать, если bootstrap прошёл с ошибкой
 
-**Базы созданы дважды (повторный запуск шагов 1-2):**
+**Базы созданы дважды (повторный запуск шагов 1-3):**
 - Удалить дубликаты в Notion вручную.
 - Обновить `data_source_id` в конфиге на актуальные.
 
 **`relation` Cases→Judges не работает (была создана до Judges):**
 - Через `notion-update-data-source` добавить колонку `Судья` типа `RELATION('<judges-data-source-id>')` в Cases.
 - Если в Cases уже есть записи без relation -- следующий sync (для тех же дел) проставит relation автоматически.
+
+**`relation` Cases→Counterparties не работает / Cases создана без `Оппонент`:**
+- См. раздел 7 «Миграция этапа 6.2 → 6.2b».
 
 **MCP не отвечает на create_database:**
 - Проверить `/mcp` -- авторизован ли Notion MCP.
@@ -177,9 +216,9 @@ notion:
 
 ---
 
-## 6. Миграция этапа 6.2 (для существующих установок)
+## 7. Миграция этапа 6.2 (для существующих установок)
 
-Если базы `Cases` и `Judges` уже созданы по версии до этапа 6.2, и в них есть данные -- нужна разовая миграция схемы. Шаги ниже **идемпотентны** -- безопасно запускать повторно.
+Если базы `Cases` и `Judges` уже созданы по версии до этапа 6.2, и в них есть данные -- нужны разовые миграции схемы. Шаги ниже **идемпотентны** -- безопасно запускать повторно. Подразделы независимы -- можно делать в любом порядке, **6.2c -- чисто в коде плагина**, в Notion миграция не нужна.
 
 ### 6.2a -- `Cases.Путь к папке`: URL → RICH_TEXT
 
@@ -198,11 +237,64 @@ notion:
 - Property заблокирована (есть формулы/relation, ссылающиеся на этот тип) -- их в этом property не должно быть, но если ругается -- через UI создай новое property `Путь к папке (текст)`, скопируй значения, удали старое, переименуй новое.
 - На машине sync'а `$env:OneDrive` пуст -- `notion-sync` запишет абсолютный путь и выведет warning. Решение: установить OneDrive или работать через `%USERPROFILE%\OneDrive\...` (см. SKILL.md → «Формирование значения Cases.Путь к папке»).
 
+### 6.2b -- создать базу `Counterparties` + добавить `Оппонент` RELATION в Cases
+
+**Зачем:** до 6.2b глобальные профили оппонентов накапливались только локально в `$VASSAL_GLOBAL_DIR/counterparties/`. С 6.2b они дополнительно пушатся в Notion-базу `Counterparties` для дашборда «у меня N дел против ООО Х, вот его типовые доводы».
+
+**Шаги:**
+
+1. **Создай базу `Counterparties`** -- скопируй JSON из раздела 2 этого файла и выполни `notion-create-database`. Запиши `data_source_id`.
+
+2. **Добавь `Оппонент` RELATION в Cases** -- через UI Notion: открой базу `Cases (vassal-litigator)` → правая часть таблицы → **+ New property** → тип `Relation` → выбрать `Counterparties (vassal-litigator)` → **Show on Counterparties** = ON (это создаёт обратную связь `Дела` автоматически) → название = `Оппонент`.
+
+   Альтернатива через MCP: `notion-update-data-source` команда `ADD COLUMN "Оппонент" RELATION('<counterparties-data-source-id>')`.
+
+3. **Обнови конфиг** `notion-config.yaml`:
+   ```yaml
+   notion:
+     databases:
+       counterparties: "<data-source-id из шага 1>"   # добавить
+     fields_map:
+       cases:
+         opponent_relation: "Оппонент"                 # добавить
+       counterparties:                                  # добавить весь блок
+         title: "Организация"
+         inn: "ИНН"
+         ogrn: "ОГРН"
+         slug: "slug"
+         typical_arguments: "Типовые доводы"
+         tactics: "Тактика"
+         representatives: "Представители"
+         cases_count: "Дел с ним"
+         last_sync: "Last sync"
+   ```
+
+4. **Запусти `/vassal-litigator:sync-notion`** на любом деле с оппонентом. Скилл создаст запись в Counterparties и установит relation `Cases.Оппонент → Counterparties`. При синке каждого следующего дела -- профиль накапливается («Дел с ним» инкрементируется, оппонент по `slug` дедупится).
+
+**Проверка:** в Notion открой созданную карточку Counterparties → справа должен быть блок `Дела` со ссылкой на карточку Cases этого дела. Если связи нет -- проверь, что в Cases.Оппонент стоит правильная relation (а не другая база).
+
+**Если что-то пошло не так:**
+- `Оппонент` RELATION не создалась с DUAL (обратная `Дела` не появилась в Counterparties) -- через UI на свойстве `Оппонент` в Cases поменяй настройку `Show on Counterparties` на ON.
+- `notion-sync` не находит конфиг `notion.databases.counterparties` -- проверь, что обновил `notion-config.yaml` после миграции (шаг 3 выше).
+
+### 6.2c -- дедуп профиля оппонента `inn-/noinn-` (только локально, миграция в Notion не нужна)
+
+**Что изменилось:** `add-opponent` и `legal-review` теперь умеют детектировать «теневой дубль» (когда на одного оппонента в `$VASSAL_GLOBAL_DIR/counterparties/` есть и `inn-{ИНН}.md`, и `noinn-{slug}.md`) и предупреждают Сюзерена. Это **только правки в SKILL.md** -- никаких изменений в Notion-схеме не требуется.
+
+**Что нужно от Сюзерена:** проверить, есть ли уже накопленные теневые дубли в `$VASSAL_GLOBAL_DIR/counterparties/`:
+```powershell
+Get-ChildItem "$env:VASSAL_GLOBAL_DIR\counterparties\" -Filter "noinn-*.md" | ForEach-Object {
+  $slug = $_.BaseName -replace '^noinn-',''
+  Write-Host "noinn-$slug -- проверь, нет ли inn-...md с тем же display_name во frontmatter"
+}
+```
+Если найдены -- мёрджить вручную по инструкции из [skills/add-opponent/SKILL.md](../skills/add-opponent/SKILL.md) → «Дедуп оппонента: inn-/noinn- теневой дубль». После мёрджа `notion-sync` синканёт чистого канонического оппонента.
+
 ---
 
-## 7. Расширения после MVP
+## 8. Расширения после MVP
 
-В эту bootstrap-инструкцию можно дописать создание баз `Hearings`, `Counterparties`, `Deadlines`, `Templates` (см. [NOTION-INTEGRATION-PROPOSAL.md](../NOTION-INTEGRATION-PROPOSAL.md) §2). Для MVP -- только `Cases` + `Judges`. Расширение -- отдельный этап (не входит в этап 6 рефакторинга).
+В эту bootstrap-инструкцию можно дописать создание баз `Hearings`, `Deadlines`, `Templates` (см. [NOTION-INTEGRATION-PROPOSAL.md](../NOTION-INTEGRATION-PROPOSAL.md) §2). С этапа 6.2b обязательны `Cases` + `Judges` + `Counterparties`. Остальные -- зона будущих этапов.
 
 При расширении конфиг расширяется аналогично:
 ```yaml
@@ -210,8 +302,10 @@ notion:
   databases:
     cases: "..."
     judges: "..."
-    counterparties: "..."   # новое
-    deadlines: "..."        # новое
+    counterparties: "..."
+    hearings: "..."        # новое в этапе 7+
+    deadlines: "..."       # новое в этапе 7+
+    templates: "..."       # новое в этапе 7+
 ```
 
 И в `skills/notion-sync/SKILL.md` добавляются новые фазы upsert.

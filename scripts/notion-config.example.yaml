@@ -23,8 +23,12 @@ notion:
   databases:
     cases: "REPLACE-WITH-CASES-DATA-SOURCE-ID"
     judges: "REPLACE-WITH-JUDGES-DATA-SOURCE-ID"
-    # Зарезервировано на будущее (вне MVP этапа 6):
-    # counterparties: "..."
+    # Опционально (этап 6.2b): профили оппонентов как Notion-DB.
+    # Если задана -- skill notion-sync делает фазу 4 (upsert в Counterparties +
+    # relation Cases.Оппонент → Counterparties). Если оставить пустой или
+    # закомментировать -- фаза 4 пропускается тихо, остальной sync работает.
+    counterparties: "REPLACE-WITH-COUNTERPARTIES-DATA-SOURCE-ID"
+    # Зарезервировано на будущее (этап 7+):
     # hearings: "..."
     # deadlines: "..."
     # templates: "..."
@@ -35,6 +39,7 @@ notion:
     cases:
       - "Статус"            # won/lost/active/paused/closed -- ручное решение юриста
     judges: []              # все поля Judges -- автогенерируемые из глобального профиля
+    counterparties: []      # все поля Counterparties -- автогенерируемые из глобального профиля
 
   # Маппинг внутренних имён vassal-litigator → имена property в Notion.
   # Если в Notion поля переименованы (например, "Номер дела" → "Case number"),
@@ -51,6 +56,7 @@ notion:
       status_manual: "Статус"
       next_hearing: "Следующее заседание"
       judge_relation: "Судья"
+      opponent_relation: "Оппонент"    # этап 6.2b
       folder_url: "Путь к папке"
       last_sync: "Last sync"
     judges:
@@ -60,6 +66,16 @@ notion:
       style: "Стиль"
       patterns: "Паттерны"
       tendencies: "Склонности"
+      cases_count: "Дел с ним"
+      last_sync: "Last sync"
+    counterparties:                    # этап 6.2b
+      title: "Организация"
+      inn: "ИНН"
+      ogrn: "ОГРН"
+      slug: "slug"
+      typical_arguments: "Типовые доводы"
+      tactics: "Тактика"
+      representatives: "Представители"
       cases_count: "Дел с ним"
       last_sync: "Last sync"
 
