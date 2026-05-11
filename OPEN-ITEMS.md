@@ -158,8 +158,13 @@
 **Что НЕ сделано (осознанно):** автоматическая миграция Notion-схемы. Реальное создание базы и добавление RELATION в Cases -- разовая операция Сюзерена по инструкции из notion-init.md (через UI или MCP). Это нелокальное действие на shared state -- агент его не выполняет автоматически.
 
 **TODO Сюзерену для активации 6.2b в работе:**
-1. По инструкции `scripts/notion-init.md` раздел 7.6.2b -- создать базу Counterparties, добавить RELATION `Оппонент` в Cases, обновить `notion-config.yaml`.
-2. Запустить `/vassal-litigator:sync-notion` на любом деле с оппонентом -- проверить, что запись создаётся и relation проставляется.
+1. ~~По инструкции `scripts/notion-init.md` раздел 7.6.2b -- создать базу Counterparties, добавить RELATION `Оппонент` в Cases, обновить `notion-config.yaml`.~~ ✅ **Выполнено 2026-05-11 (агентская миграция через Notion MCP):**
+   - База `Counterparties (vassal-litigator)` создана в подстранице `vassal-litigator` -- [URL](https://www.notion.so/7abc3b53f25c4522ba1f91833d455174), data_source_id `bc98dc90-3f32-48e0-bffc-f307c2bcff4b`.
+   - В Cases добавлено property `Оппонент` (RELATION на Counterparties, DUAL).
+   - В Counterparties автоматически создалось обратное property `Дела` (DUAL).
+   - `$VASSAL_CONFIG_DIR/notion-config.yaml` обновлён: `databases.counterparties`, `fields_manual_only.counterparties: []`, `fields_map.cases.opponent_relation`, блок `fields_map.counterparties`. Конфиг живёт на OneDrive (вне git-репо), синхронизируется между машинами автоматически.
+   - Также подтверждено: property `Cases.Путь к папке` уже типа `text` (миграция 6.2a со стороны Notion-схемы выполнена раньше).
+2. Запустить `/vassal-litigator:sync-notion` на любом деле с оппонентом -- runtime-проверка, что фаза 4 (Upsert Counterparties) работает: запись создаётся, relation `Cases.Оппонент ↔ Counterparties.Дела` проставляется. **Это единственный оставшийся пункт по 6.2b.**
 3. (Опционально, разово) backfill: пробежаться `/vassal-litigator:sync-notion` по всем активным делам, чтобы Counterparties наполнилась.
 
 ---
