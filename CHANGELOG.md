@@ -1,3 +1,13 @@
+## [vassal-litigator] OPEN-ITEMS.md -- 2026-05-11
+
+### Added
+- **[OPEN-ITEMS.md](OPEN-ITEMS.md)** -- персистентный трекер незакрытых задач и ограничений. Содержит:
+  - §A -- известные ограничения этапов 6/6.1 (cross-machine Notion paths, Counterparties Notion DB, backfill глобальной памяти, INN dedup edge case, OneDrive conflicts, Templates) с приоритетами и планами.
+  - §B -- открытые вопросы из [FINAL-REPORT.md §7](FINAL-REPORT.md) (init-case без SKILL.md, settlement skill, актуальность справочников).
+  - §C -- этап 7 (наполнение справочников по ситуации).
+  - §D -- история закрытых пунктов (растёт по мере закрытия).
+- Назначение: чтобы ограничения и открытые вопросы пережили смену сессий Claude Code -- единое место правды, не разбросанные TODO в чате.
+
 ## [vassal-litigator] этап 6.1 -- 2026-05-11
 
 ### Fixed

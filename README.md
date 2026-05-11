@@ -30,6 +30,11 @@
 | Обжалование | `draft-judgment` | Проект судебного решения |
 | | `appeal` | Апелляционная жалоба |
 | | `cassation` | Кассационная жалоба |
+| Sync | `notion-sync` | Опц. push метаданных дел и профилей судей в Notion (Cases + Judges) |
+
+**Кросс-дельная память** (этап 6): профили судей и оппонентов накапливаются в `$VASSAL_GLOBAL_DIR/` (по умолчанию `~/.vassal-global/`) -- читаются всеми скиллами как фон до анализа. На двух машинах с разными именами пользователей -- через `reg add /t REG_EXPAND_SZ` с `%OneDrive%`. См. [shared/conventions.md](shared/conventions.md) → «Глобальная память» и [ARCHITECTURE.md §15](ARCHITECTURE.md).
+
+**Открытые задачи и ограничения** -- [OPEN-ITEMS.md](OPEN-ITEMS.md) (живой трекер).
 
 ## Установка
 
@@ -100,7 +105,9 @@ vassal-litigator/
 │   ├── setup.sh
 │   └── extract_text.py
 ├── ARCHITECTURE.md           # Подробная архитектура
-└── CHANGELOG.md
+├── CHANGELOG.md
+├── OPEN-ITEMS.md             # Живой трекер открытых задач и ограничений
+└── FINAL-REPORT.md           # Историческая ревизия плагина и план рефакторинга
 ```
 
 ## Лицензия
