@@ -18,3 +18,7 @@ venv/
 
 # Case data (never commit real case files)
 cases/
+
+# Research dumps в корне (Perplexity и пр., не артефакты плагина)
+/Апелляция регулирование.md
+/Первая инстанция регулированеи.md
