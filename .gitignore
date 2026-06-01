@@ -22,3 +22,6 @@ cases/
 # Research dumps в корне (Perplexity и пр., не артефакты плагина)
 /Апелляция регулирование.md
 /Первая инстанция регулированеи.md
+
+# Build artifacts (zip/.plugin для дистрибуции)
+dist/
