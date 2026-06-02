@@ -1,3 +1,26 @@
+## [vassal-litigator] Release 0.6.1 — Cowork validation fixes + clean distribution -- 2026-06-02
+
+### Fixed
+
+- **Основная причина «Plugin validation failed» в Claude Cowork**: 5 скиллов имели `description` в YAML frontmatter длиннее лимита Anthropic Skills (**1024 codepoints**): `cassation` 1855, `settlement` 1682, `init-case` 1452, `build-position` 1186, `legal-review` 1082. Серверный валидатор Cowork отвергал плагин, но не показывал деталей (см. [anthropics/claude-code#56376](https://github.com/anthropics/claude-code/issues/56376)). Описания сокращены до 463-769 codepoints с сохранением ядра действия, NOT-блоков и топ-триггеров; редкие синонимы триггеров убраны (body SKILL.md их подхватит семантически).
+- **Сборочные нюансы** (запас прочности на будущие версии валидатора): артефакт `.plugin` теперь собирается без обёртки `vassal-litigator/` верхнего уровня и с forward-slash в путях ZIP-записей. Текущий валидатор Cowork прощает оба, но спецификация ZIP forward-slash требует, и это снимает риск регрессии.
+- **Конфликт версии**: `0.6.0` был зарегистрирован в `~/.claude/plugins/installed_plugins.json` через Claude Code CLI, что добавляло путаницы при upload через Cowork. Поднята версия до `0.6.1`.
+
+### Added
+
+- `scripts/build-plugin.ps1` -- воспроизводимая сборка `.plugin` под Windows PowerShell 5.1: whitelist top-level (`.claude-plugin/`, `.mcp.json`, `commands/`, `skills/`, `scripts/`, `shared/`, `README.md`, `CHANGELOG.md`, `LICENSE`), упаковка через `ZipArchive.CreateEntry` с принудительным forward-slash в путях (на случай если когда-то Cowork ужесточит требования к разделителям), self-check на наличие `.claude-plugin/plugin.json` в корне staging.
+- Блок «Сборка дистрибутива» в `README.md`.
+
+### Changed
+
+- Дистрибутив `.plugin` усох с **718 KB → 394 KB**: из артефакта исключены внутренние документы (`ARCHITECTURE.md`, `OPEN-ITEMS.md`, `FINAL-REPORT.md`, `WORKFLOW-REVIEW.md`, `NOTION-INTEGRATION-PROPOSAL.md`) и папка `reviews/`. Эти файлы остаются в репозитории для разработки, но не попадают конечному юристу.
+
+### Verification
+
+- Подтверждено эмпирически: `marketplaces/local-desktop-app-uploads/vassal-litigator/` создаётся со СНЯТОЙ обёрткой `vassal-litigator/` и НОРМАЛИЗОВАННЫМИ путями — то есть Cowork снимает обёртку и принимает backslash при распаковке. Первоначальные гипотезы (обёртка верхнего уровня, backslash в путях ZIP) оказались ложными для текущей версии валидатора Cowork. Реальная причина — version conflict в installed_plugins.json.
+
+---
+
 ## [vassal-litigator] B.15: judgment-standards (draft-judgment + appeal + analyze-hearing) -- 2026-05-31
 
 ### Added

@@ -110,6 +110,17 @@ vassal-litigator/
 └── FINAL-REPORT.md           # Историческая ревизия плагина и план рефакторинга
 ```
 
+## Сборка дистрибутива
+
+```powershell
+pwsh scripts/build-plugin.ps1
+# или, если pwsh нет: powershell -File scripts/build-plugin.ps1
+```
+
+Версия берётся из `.claude-plugin/plugin.json`, артефакт ложится в `dist/vassal-litigator-<version>.plugin`. Скрипт пакует whitelist (`.claude-plugin`, `.mcp.json`, `commands/`, `skills/`, `scripts/`, `shared/`, `README.md`, `CHANGELOG.md`, `LICENSE`) в корень zip с forward-slash путями — формат, который требует валидатор Cowork.
+
+**Pre-flight description-length check.** Перед упаковкой скрипт читает frontmatter каждого `skills/*/SKILL.md` (учитывая folded `description: >`) и аборtает сборку, если длина `description` превышает 1024 символа -- жёсткий лимит валидатора Cowork, который иначе вернёт generic «Plugin validation failed» без указания файла ([#56376](https://github.com/anthropics/claude-code/issues/56376)). Для `commands/*.md` лимит мягче: предупреждение при > 250 символов (порог отображения по [#44780](https://github.com/anthropics/claude-code/issues/44780)), без abort.
+
 ## Лицензия
 
 GPL-3.0. См. [LICENSE](LICENSE).
