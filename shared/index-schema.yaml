@@ -4,6 +4,10 @@
 # Изменения v2 → v3:
 # - Добавлены поля content_hash, duplicates, duplicate_copies для дедупликации
 #   по содержимому (см. shared/conventions.md, раздел «Дедупликация по content_hash»).
+# Дополнено 2026-06 (аудит №2, Cowork-first): поле raw_pristine — режим манифеста для .vassal/raw/.
+# Байтовые копии в raw/ хранятся только для opponent/court (chain of custody); для client —
+# только манифест (origin + content_hash в записи). Аддитивно и обратно совместимо:
+# запись без raw_pristine трактуется как false.
 
 version: 3
 last_updated: "2026-03-26T14:30:00"    # ISO datetime, обновляется при каждом изменении
@@ -40,7 +44,12 @@ documents:
     origin:
       name: "исходное_имя.pdf"           # Имя файла как получено (до переименования)
       received: "2026-03-26"             # Дата получения
-      intake_batch: "intake-2026-03-26"  # Имя пакета (папка в raw/)
+      intake_batch: "intake-2026-03-26"  # Логический пакет приёма (папка в raw/ создаётся
+                                          # только для пристинных копий opponent/court)
+    raw_pristine: false                   # true → пристинная байтовая копия лежит в .vassal/raw/
+                                          # (source ∈ {opponent, court} или keep-pristine, chain of custody).
+                                          # false → только манифест (origin + content_hash в этой записи),
+                                          # без байтовой копии (оригинал сохранён внешне).
 
     # Целостность зеркала
     content_hash: "sha256:..."            # SHA-256 содержимого файла (hex). Считается при ingest.
