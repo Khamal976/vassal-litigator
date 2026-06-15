@@ -326,7 +326,7 @@ fallback_arbitrum_docx: false | true   # был ли arbitrum-docx недост�
 | Заявление об оспаривании сделки (гл. III.1) | вывод активов должника | Состав ст. 61.2 / 61.3 + период подозрительности + последствия (реституция) |
 | Заявление о привлечении к субсидиарной / о взыскании убытков (гл. III.2) | доведение до банкротства | Статус КДЛ + презумпции (ст. 61.11 / 61.12) / убытки ст. 61.20 |
 
-Глубина составов: **включение в реестр** -- [bankruptcy-claim-registration.md](../build-position/references/bankruptcy-claim-registration.md); **ответственность и защита АУ** -- [bankruptcy-manager-liability.md](../build-position/references/bankruptcy-manager-liability.md); **оспаривание сделок III.1** -- [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md); субсидиарка III.2 (C) -- справочник в наполнении (WS-1d).
+Глубина составов: **включение в реестр** -- [bankruptcy-claim-registration.md](../build-position/references/bankruptcy-claim-registration.md); **ответственность и защита АУ** -- [bankruptcy-manager-liability.md](../build-position/references/bankruptcy-manager-liability.md); **оспаривание сделок III.1** -- [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md); **субсидиарка/убытки III.2** -- [bankruptcy-subsidiary-liability.md](../build-position/references/bankruptcy-subsidiary-liability.md) (C).
 
 ## Чек-лист просительной части процессуального документа
 
@@ -395,7 +395,7 @@ fallback_arbitrum_docx: false | true   # был ли arbitrum-docx недост�
 
 **Оспаривание сделки (III.1) / субсидиарка / убытки (III.2):**
 1. Просительная -- «признать недействительной сделку {...} + применить последствия (реституция / восстановление требования)» / «привлечь {КДЛ} к субсидиарной ответственности» / «взыскать убытки (ст. 61.20)».
-2. Состав -- маркеры: период подозрительности (ст. 61.2 / 61.3) -- глубина [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md) (B); презумпции доведения до банкротства (ст. 61.11 / 61.12) -- субсидиарка/убытки III.2 (C), справочник в наполнении (WS-1d).
+2. Состав -- маркеры: период подозрительности (ст. 61.2 / 61.3) -- глубина [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md) (B); статус КДЛ + презумпции доведения до банкротства (ст. 61.10 / 61.11 / 61.12) либо локальный вред (убытки ст. 61.20 / ст. 53.1 ГК) -- глубина [bankruptcy-subsidiary-liability.md](../build-position/references/bankruptcy-subsidiary-liability.md) (C). Для субсидиарки/убытков: при недоказанности размера до окончания расчётов -- просить определение об основаниях + приостановление (п. 7 ст. 61.16).
 
 ### Универсальные требования к просительной части любого документа
 

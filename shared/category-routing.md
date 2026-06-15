@@ -86,7 +86,7 @@
 | Профиль | Источник |
 |---|---|
 | исковое (АПК) / исковое (ГПК) / корпоративный | материальные нормы по `case.qualification.applicable_norms` (ГК + спец. законы; корп. — ФЗ-14/ФЗ-208). Отдельного reference нет |
-| банкротство | `build-position/references/key-doctrines.md` (процессуальные доктрины) **+ включение в реестр — [`bankruptcy-claim-registration.md`](../skills/build-position/references/bankruptcy-claim-registration.md)** (A); **ответственность/защита АУ — [`bankruptcy-manager-liability.md`](../skills/build-position/references/bankruptcy-manager-liability.md)** (D); **оспаривание сделок III.1 — [`bankruptcy-transaction-challenge.md`](../skills/build-position/references/bankruptcy-transaction-challenge.md)** (B); субсидиарка/убытки III.2 (C) — в наполнении (WS-1d) |
+| банкротство | `build-position/references/key-doctrines.md` (процессуальные доктрины) **+ включение в реестр — [`bankruptcy-claim-registration.md`](../skills/build-position/references/bankruptcy-claim-registration.md)** (A); **ответственность/защита АУ — [`bankruptcy-manager-liability.md`](../skills/build-position/references/bankruptcy-manager-liability.md)** (D); **оспаривание сделок III.1 — [`bankruptcy-transaction-challenge.md`](../skills/build-position/references/bankruptcy-transaction-challenge.md)** (B); **субсидиарка/убытки III.2 — [`bankruptcy-subsidiary-liability.md`](../skills/build-position/references/bankruptcy-subsidiary-liability.md)** (C) |
 | трудовой спор | **`labor-reference.md`** (бремя доказывания, восстановление, расчёт среднего заработка) |
 | административное (АПК) / (КАС) | **`administrative-reference.md`** (структура защиты, бремя, пропорциональность, НПА, астрент) |
 
@@ -130,4 +130,4 @@
 - **Ключи роутинга** — `shared/case-schema.yaml` v5: `case.category` (enum 7 значений + синоним), `case.bankruptcy.procedure`, `case.jurisdiction.competent_court`.
 - **Owner'ы записи** (см. `shared/conventions.md` → «Ownership полей case.yaml»): `category` — init-case; `bankruptcy.*` — init-case (структура) + legal-review (`registry_close_date`, procedure); `jurisdiction` — legal-review.
 - **Потребители:** `legal-review` (Фаза 1.5 + блоки c/d/e), `prepare-hearing` (профиль + чек-лист просительной/типы). Позже: `appeal`/`cassation` (сроки обжалования по профилю — §3.1).
-- **Материальные банкротные составы** (для §3.5) поступают из WS-1d: справочники A (реестр) · B (оспаривание сделок III.1) · C (субсидиарка/убытки III.2) · D (жалоба/ответственность АУ).
+- **Материальные банкротные составы** (для §3.5) встроены (WS-1d, все 4 ✅): A (реестр) · B (оспаривание сделок III.1) · C (субсидиарка/убытки III.2) · D (жалоба/ответственность АУ).
