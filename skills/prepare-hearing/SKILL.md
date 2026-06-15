@@ -326,7 +326,7 @@ fallback_arbitrum_docx: false | true   # был ли arbitrum-docx недост�
 | Заявление об оспаривании сделки (гл. III.1) | вывод активов должника | Состав ст. 61.2 / 61.3 + период подозрительности + последствия (реституция) |
 | Заявление о привлечении к субсидиарной / о взыскании убытков (гл. III.2) | доведение до банкротства | Статус КДЛ + презумпции (ст. 61.11 / 61.12) / убытки ст. 61.20 |
 
-Глубина составов: **включение в реестр** -- [bankruptcy-claim-registration.md](../build-position/references/bankruptcy-claim-registration.md); **ответственность и защита АУ** -- [bankruptcy-manager-liability.md](../build-position/references/bankruptcy-manager-liability.md); оспаривание III.1 (B) · субсидиарка III.2 (C) -- банкротные справочники в наполнении (WS-1d).
+Глубина составов: **включение в реестр** -- [bankruptcy-claim-registration.md](../build-position/references/bankruptcy-claim-registration.md); **ответственность и защита АУ** -- [bankruptcy-manager-liability.md](../build-position/references/bankruptcy-manager-liability.md); **оспаривание сделок III.1** -- [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md); субсидиарка III.2 (C) -- справочник в наполнении (WS-1d).
 
 ## Чек-лист просительной части процессуального документа
 
@@ -395,7 +395,7 @@ fallback_arbitrum_docx: false | true   # был ли arbitrum-docx недост�
 
 **Оспаривание сделки (III.1) / субсидиарка / убытки (III.2):**
 1. Просительная -- «признать недействительной сделку {...} + применить последствия (реституция / восстановление требования)» / «привлечь {КДЛ} к субсидиарной ответственности» / «взыскать убытки (ст. 61.20)».
-2. Состав -- маркеры: период подозрительности (ст. 61.2 / 61.3), презумпции доведения до банкротства (ст. 61.11 / 61.12). Глубина состава -- банкротные справочники WS-1d (B / C).
+2. Состав -- маркеры: период подозрительности (ст. 61.2 / 61.3) -- глубина [bankruptcy-transaction-challenge.md](../build-position/references/bankruptcy-transaction-challenge.md) (B); презумпции доведения до банкротства (ст. 61.11 / 61.12) -- субсидиарка/убытки III.2 (C), справочник в наполнении (WS-1d).
 
 ### Универсальные требования к просительной части любого документа
 
