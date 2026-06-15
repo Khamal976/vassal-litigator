@@ -86,7 +86,7 @@
 | Профиль | Источник |
 |---|---|
 | исковое (АПК) / исковое (ГПК) / корпоративный | материальные нормы по `case.qualification.applicable_norms` (ГК + спец. законы; корп. — ФЗ-14/ФЗ-208). Отдельного reference нет |
-| банкротство | `build-position/references/key-doctrines.md` (процессуальные доктрины) **+ ответственность/защита АУ — [`bankruptcy-manager-liability.md`](../skills/build-position/references/bankruptcy-manager-liability.md)**; реестр (A) · оспаривание III.1 (B) · субсидиарка/убытки III.2 (C) — в наполнении (WS-1d) |
+| банкротство | `build-position/references/key-doctrines.md` (процессуальные доктрины) **+ включение в реестр — [`bankruptcy-claim-registration.md`](../skills/build-position/references/bankruptcy-claim-registration.md)** (A); **ответственность/защита АУ — [`bankruptcy-manager-liability.md`](../skills/build-position/references/bankruptcy-manager-liability.md)** (D); оспаривание III.1 (B) · субсидиарка/убытки III.2 (C) — в наполнении (WS-1d) |
 | трудовой спор | **`labor-reference.md`** (бремя доказывания, восстановление, расчёт среднего заработка) |
 | административное (АПК) / (КАС) | **`administrative-reference.md`** (структура защиты, бремя, пропорциональность, НПА, астрент) |
 
