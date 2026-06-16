@@ -25,10 +25,7 @@ description: >
 2. **Источник файлов -- `Входящие документы/`**. Если папка пуста -- проверь `.vassal/history.md`: возможно, файлы недавно приобщил другой скилл (`prepare-hearing` / `analyze-hearing`) и очистил входящие. Сообщи: «Папка "Входящие документы/" пуста.» -- и если нашёл недавнее приобщение, добавь: «Последнее приобщение: {что / когда / каким скиллом}, файлы уже в деле как doc-NNN.» Иначе: «Положите туда файлы и запустите add-evidence снова.»
 3. Для каждого файла вычисли `content_hash` (sha256 от содержимого). **Байтовую копию в `raw/` не делай** — client-режим манифеста (см. `shared/conventions.md` → «Cowork-first robustness»).
 4. Зафиксируй **манифест** в записи индекса: `origin.name` (исходное имя), дату получения, пакет (`origin.intake_batch = evidence-{дата}`), `content_hash`, `source: client`, `raw_pristine: false`.
-5. **OCR pipeline** -- как в intake:
-   - PDF с текстовым слоем -> извлеки текст программно
-   - DOCX -> Read tool / python-docx
-   - Изображения / сканы -> tesseract, при низком качестве -- LLM fallback (Read tool)
+5. **Извлечение текста — по протоколу `shared/ocr.md`** (как в intake): vision основной; кэш по `content_hash`; `${CLAUDE_PLUGIN_ROOT}/scripts/extract_text.py <файл>` → `text`/`needs_vision`/`vision_pages`/`content_hash`; при `needs_vision` — vision по PNG из `outputs/` (§3); скан/изображение/мусорный слой → vision; длинный скан → структурный режим; low-conf критичные реквизиты → `needs_manual_review` + флаг.
 6. **Категоризация** с учетом контекста дела:
    - Тип документа (из таксономии -- см. `shared/conventions.md`)
    - Дата, стороны

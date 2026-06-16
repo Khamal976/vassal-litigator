@@ -32,8 +32,10 @@ documents:
     seal: false                           # Есть ли печать
     signature: false                      # Есть ли подпись
     completeness: "full"                  # full | partial | fragment
-    quality: "high"                       # high | medium | low (качество текста/скана)
-    needs_manual_review: false            # true если OCR дал низкое качество
+    quality: "high"                       # high | medium | low — критерий по shared/ocr.md §7
+                                          # (метод извлечения + число [Нечитаемо] + low-conf критичные поля)
+    needs_manual_review: false            # true: низкое качество vision / структурный режим /
+                                          # обрезанный рендер / low-conf критичное поле (shared/ocr.md §7)
     pages: null                           # Количество страниц (число)
 
     source: "client"                      # client | opponent | court | public
@@ -55,7 +57,8 @@ documents:
     content_hash: "sha256:..."            # SHA-256 содержимого файла (hex). Считается при ingest.
                                           # Используется для: (1) дедупа по содержимому,
                                           # (2) детекции изменения файла (update-index),
-                                          # (3) автосвязки переименованных файлов.
+                                          # (3) автосвязки переименованных файлов,
+                                          # (4) ключ кэша OCR — vision выполняется один раз (shared/ocr.md §4).
     mirror_stale: false                   # true если content_hash файла отличается от хэша на момент создания зеркала
     last_verified: "2026-03-26"          # Дата последней проверки
 
