@@ -538,7 +538,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 Чтобы скиллы не перезаписывали друг другу значения и не возникала «гонка обновлений», каждое поле `case.yaml` имеет **owner-скиллы** — те, кому разрешено его писать. Все остальные читают, но не пишут.
 
-Матрица фиксируется в [case-schema.yaml](case-schema.yaml) v5 в виде комментариев `# writes: <скиллы>` и `# reads: <скиллы>` рядом с каждым полем (или блоком).
+Матрица фиксируется в [case-schema.yaml](case-schema.yaml) v6 в виде комментариев `# writes: <скиллы>` и `# reads: <скиллы>` рядом с каждым полем (или блоком).
 
 Сводно по основным группам:
 
@@ -553,8 +553,8 @@ Notion-слой -- **опциональный**. Плагин полностью
 | `case.jurisdiction` | `legal-review` | `build-position`, `prepare-hearing`, `appeal`, `cassation` |
 | `case.pretrial` | `legal-review` | `prepare-hearing`, `appeal` |
 | `case.settlement.*` | `settlement` (основные поля), `analyze-hearing` (`confirmed_date`, если суд утвердил/принял прямо в заседании) | `prepare-hearing` (хук в фазе 2 п.13), `cassation` (если `confirmed_date != null` и обжалуется по ст. 141 АПК) |
-| `case.appeal.*` | `appeal`, `analyze-hearing` (`hearing_date`, `ruling_date`) | `cassation` |
-| `case.cassation.*` | `cassation`, `analyze-hearing` (`hearing_date`, `ruling_date`) | — |
+| `case.appeal.*` | `appeal` (расчётные), `analyze-hearing` (`hearing_date`, `ruling_date`), `init-case` (фактические поля при постапелляционном входе — `origin: intake`) | `cassation` |
+| `case.cassation.*` | `cassation` (расчётные), `analyze-hearing` (`hearing_date`, `ruling_date`), `init-case` (фактические поля при посткассационном входе — `origin: intake`) | — |
 | `case.status` | `init-case`, `appeal`, `cassation`, `analyze-hearing`, `settlement` | все |
 | `case.timeline` (append-only) | `init-case`, `legal-review`, `analyze-hearing`, `appeal`, `cassation`, `settlement` | все |
 | `case.filing_date` | `init-case` | все |
