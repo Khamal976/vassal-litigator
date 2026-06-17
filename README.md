@@ -14,11 +14,12 @@
 
 **Обжалование** — подготовка апелляционных и кассационных жалоб с систематическим поиском оснований по АПК/ГПК РФ, проект судебного решения с учётом стиля конкретного судьи.
 
-## Скиллы (12)
+## Скиллы (17)
 
 | Фаза | Скилл | Описание |
 |------|-------|----------|
-| Фундамент | `intake` | Приём и обработка материалов клиента |
+| Фундамент | `init-case` | Инициализация дела: структура папок + карточка |
+| | `intake` | Приём и обработка материалов клиента |
 | | `catalog` | Генерация xlsx-таблицы документов |
 | | `update-index` | Верификация и синхронизация реестра |
 | Анализ | `legal-review` | Комплексный правовой анализ |
@@ -27,10 +28,13 @@
 | | `add-opponent` | Приём и анализ документов оппонента |
 | | `prepare-hearing` | Подготовка к заседанию |
 | | `analyze-hearing` | Анализ транскрипции заседания |
+| | `settlement` | Примирение: мировое / отказ / признание иска |
 | Обжалование | `draft-judgment` | Проект судебного решения |
 | | `appeal` | Апелляционная жалоба |
 | | `cassation` | Кассационная жалоба |
+| На подачу | `build-submission` | Сборка нумерованного комплекта на подачу |
 | Sync | `notion-sync` | Опц. push метаданных дел и профилей судей в Notion (Cases + Judges) |
+| | `backfill-global` | Разовый перенос локальной аналитики в глобальную память |
 
 **Кросс-дельная память** (этап 6): профили судей и оппонентов накапливаются в `$VASSAL_GLOBAL_DIR/` (по умолчанию `~/.vassal-global/`) -- читаются всеми скиллами как фон до анализа. На двух машинах с разными именами пользователей -- через `reg add /t REG_EXPAND_SZ` с `%OneDrive%`. См. [shared/conventions.md](shared/conventions.md) → «Глобальная память» и [ARCHITECTURE.md §15](ARCHITECTURE.md).
 
@@ -81,10 +85,12 @@ chmod +x scripts/setup.sh
 vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
-├── commands/                 # Slash-команды (13)
-├── skills/                   # Скиллы (12)
+├── commands/                 # Slash-команды (17)
+├── skills/                   # Скиллы (17)
+│   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
+│   ├── update-index/
 │   ├── legal-review/
 │   │   └── references/       # Справочники по срокам, подсудности, досудебному порядку
 │   ├── build-position/
@@ -92,10 +98,13 @@ vassal-litigator/
 │   ├── add-opponent/
 │   ├── prepare-hearing/
 │   ├── analyze-hearing/
+│   ├── settlement/
 │   ├── draft-judgment/
 │   ├── appeal/
 │   ├── cassation/
-│   └── update-index/
+│   ├── build-submission/
+│   ├── backfill-global/
+│   └── notion-sync/
 ├── shared/                   # Общие схемы и конвенции
 │   ├── conventions.md
 │   ├── case-schema.yaml
@@ -103,7 +112,10 @@ vassal-litigator/
 │   └── mirror-template.md
 ├── scripts/                  # Утилиты
 │   ├── setup.sh
-│   └── extract_text.py
+│   ├── extract_text.py
+│   ├── tessdata/             # Вендоренный rus.traineddata для OCR
+│   ├── notion-init.md
+│   └── build-plugin.ps1
 ├── ARCHITECTURE.md           # Подробная архитектура
 ├── CHANGELOG.md
 ├── OPEN-ITEMS.md             # Живой трекер открытых задач и ограничений

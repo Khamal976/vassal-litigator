@@ -2,7 +2,7 @@
 
 > Плагин для помощи юристу в ведении судебных дел: от приёма документов клиента до кассационной жалобы.
 
-**Версия архитектуры:** 0.6.0
+**Версия архитектуры:** 0.7.0
 **Дата:** 2026-03-30
 **Ревизия:** 2026-05-31 (B.3 v1 -- полугодовая сверка `legal-review/references/`; B.12 -- новый `appeal/references/permissible-grounds.md`; B.13 -- новый `legal-review/references/production-types.md`; B.14 -- новая директория `build-position/references/` + `key-doctrines.md` по ППВС № 46; B.15 -- новый `legal-review/references/judgment-standards.md` по ППВС № 23 в ред. 09.12.2025). См. также: предыдущая ревизия 2026-05-30 (B.2 -- skill `settlement`, расширение `cassation` под ст. 141 АПК, case-schema v3→v4).
 
@@ -105,11 +105,10 @@ plugins/vassal-litigator/
 │   ├── mirror-template.md          ← Шаблон md-зеркала
 │   └── conventions.md              ← Общие конвенции (именование, форматы, правила)
 ├── scripts/
-│   ├── setup.sh                    ← Установка зависимостей (tesseract, ocrmypdf) — раз за сессию
-│   ├── extract_text.py             ← Извлечение текста из PDF/DOCX/изображений
-│   ├── create_mirror.py            ← Создание md-зеркала
-│   ├── update_index.py             ← Обновление index.yaml
-│   ├── generate_table.py           ← Генерация xlsx-таблицы из индекса
+│   ├── setup.sh                    ← Установка зависимостей (tesseract + python-пакеты) — раз за сессию
+│   ├── extract_text.py             ← Извлечение текста из PDF/DOCX/изображений (детерминированная нога OCR)
+│   ├── tessdata/rus.traineddata    ← Вендоренный рус. словарь tesseract (опц. спот-сверка полей)
+│   ├── build-plugin.ps1            ← Сборка .plugin (whitelist + pre-flight проверка длины description)
 │   ├── notion-init.md              ← Bootstrap-инструкция для Notion-слоя (разовая)
 │   └── notion-config.example.yaml  ← Шаблон ~/.vassal/notion-config.yaml
 └── CHANGELOG.md
@@ -935,6 +934,40 @@ OCR концептуально отделён от LLM. Сначала прог�
 **Подключение к downstream:** после утверждения судом — `case.settlement.confirmed_date` фиксирует факт. Если обжалуется определение по ст. 141 ч. 11 АПК — путь через расширенный `cassation` (`cassation.target = 'ruling_settlement'`, 1 месяц со дня вынесения, минуя апелляцию).
 
 **Out of scope MVP** (зарезервировано в OPEN-ITEMS): мировое в банкротстве (гл. VIII ФЗ-127); процессуальные основания ст. 150 АПК (это не примирение); соглашение по обстоятельствам ст. 70 ч. 2 АПК; отказ от жалобы как самостоятельный режим.
+
+---
+
+### 8.14. build-submission — Сборка комплекта на подачу
+
+**Тип:** скилл + команда (`/vassal-litigator:build-submission`)
+**Модель:** Sonnet (сверка перечня с вложенным) + Haiku (резолв приложений по индексу)
+**Вход:** готовый процессуальный документ (продукт `prepare-hearing` / `appeal` / `cassation` / `settlement`), `index.yaml`, рабочая версия с `[doc-NNN]`
+**Выход:**
+- `На подачу/{ГГГГ-ММ-ДД} {Сторона} - {действие}/` — нумерованный комплект с самоописывающими именами `NN Наименование от ГГГГ-ММ-ДД Nл.ext`
+- Манифест `.vassal/submissions/{дата}-{действие}.md`; пометка `filing_status` в индексе
+**Зависимости:** один из document-producing скиллов (источник перечня приложений)
+
+Сверяет «заявлено vs вложено» (вбирает F4.2): наличие файла, тип, число единиц, суммы пересчётом, осиротевшие приложения, качество зеркал. Комплект собирается всегда; расхождения помечаются, не блокируют. Реализует verify-before-assert (сверка полноты).
+
+### 8.15. backfill-global — Перенос локальной аналитики в глобальную память
+
+**Тип:** скилл + команда (`/vassal-litigator:backfill-global`)
+**Модель:** Sonnet
+**Вход:** локальные `.vassal/judge-profile.md` и `opponent-*.md` по делам; `$VASSAL_GLOBAL_DIR/`
+**Выход:** дополненные кросс-дельные профили `$VASSAL_GLOBAL_DIR/judges/` и `counterparties/` (аппенд-only)
+**Зависимости:** наличие локальной аналитики (иначе честный no-op с объяснением)
+
+Разовый перенос накопленных локальных наблюдений в глобальные профили — для дел, заведённых до появления кросс-дельной памяти. Сам наблюдения из транскрипций/решений не извлекает.
+
+### 8.16. notion-sync — Синхронизация с Notion (push)
+
+**Тип:** скилл + команда (`/vassal-litigator:sync-notion`)
+**Модель:** Sonnet
+**Вход:** `case.yaml`, `history.md`, глобальный профиль судьи; `$VASSAL_CONFIG_DIR/notion-config.yaml`
+**Выход:** upsert записей в Notion-базы `Cases` / `Judges` (+ опц. `Counterparties`); односторонний push
+**Зависимости:** настроенный `notion-config.yaml` + доступный Notion MCP (feature detection + graceful degradation, если нет)
+
+Зеркалит метаданные дела и профиль судьи в Notion-дашборд. Авто-триггеры (мягкая рекомендация) в конце `init-case` / `analyze-hearing` / `appeal` / `cassation` / `add-opponent`. Не источник правды — правда в `.vassal/`.
 
 ---
 
