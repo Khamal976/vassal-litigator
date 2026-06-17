@@ -349,7 +349,7 @@ case:
     hearing_date: null              # Дата заседания кассационной инстанции
     ruling_date: null               # Дата вынесения постановления кассации
     result: null                    # upheld | overturned | modified | dismissed | null
-    instance: null                  # окружной | СКЭС ВС РФ — какая кассация (1 или 2)
+    instance: null                  # окружной/СИП | КСОЮ | СКЭС ВС РФ | СКГД ВС РФ — какая кассация (1 или 2; АПК и ГПК)
 
   # Хронология (пополняется по ходу дела)
   # writes (append): init-case (создание), analyze-hearing (после заседания),
