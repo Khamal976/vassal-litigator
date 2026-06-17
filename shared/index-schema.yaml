@@ -80,8 +80,8 @@ documents:
     role_in_bundle: null                  # main | appendix | exhibit
 
     # Процессуальный статус
-    filing_status: null                   # null | draft | submitted | filed
-    filing_folder: null                   # Путь к процессуальной папке
+    filing_status: null                   # null | draft | submitted | filed; пишет build-submission/вручную, только главному документу (приложения не помечаем)
+    filing_folder: null                   # последняя папка подачи главного дока; членство приложений — в .vassal/submissions/, не здесь
 
     tags: []                              # Произвольные теги
 
