@@ -1,3 +1,35 @@
+## [vassal-litigator] 0.8.0 — Аудит №2 WS-6 + WS-7: статика 8 скиллов, фиксы по кластерам, актуализация документации -- 2026-06-17
+
+### Added
+
+- **`reviews/audit-2/WS-6-static-audit.md`** — синтез сплошного статического аудита 8 непротестированных скиллов (`cassation`, `settlement`, `add-opponent`, `analyze-hearing`, `draft-judgment`, `update-index`, `catalog`, `notion-sync`). Реестр **F6.1–F6.34**: 18 подтверждённых находок (P1 ×12 · P2 ×4 · P3 ×2; P0 нет), 16 «можно лучше», 2 отброшено скептиками. Метод — параллельный multi-agent workflow (карта контрактов → анализ по осям A–D + verify-before-assert → adversarial-проверка → синтез).
+- `ARCHITECTURE.md` §8 — описания скиллов `build-submission` (8.14), `backfill-global` (8.15), `notion-sync` (8.16).
+
+### Fixed (WS-6 — фиксы по кластерам, схема v6 не менялась)
+
+- **C1 «поле с владельцем/в схеме, но без писателя» (Chunk A):** `analyze-hearing` теперь пишет в `case.yaml` итоги заседания — утверждение мирового / принятие отказа / признания (`settlement.confirmed_date`, `status=settled|withdrawn`, `court_ruling_id`), даты заседаний/постановлений апелляции и кассации, `next_hearing_source` (F6.17, F6.4, F6.24, F6.26, закрывает F6.7); `cassation` пишет расчётные `target/instance/deadline/origin/_set_by/_set_date/appealed_ruling_doc_id` (F6.2); `settlement` apply путь-зависим, реально проставляет `confirmed_date/in_progress/status/filed_date` (F6.7, F6.13); `add-opponent` — дедуп по `content_hash` → `duplicate_copies` + инкремент `next_bundle_id` (F6.15, F6.16); `update-index` сбрасывает `mirror_stale` при пересоздании зеркала (F6.34).
+- **C3 verify-before-assert (Chunk B):** `settlement`, `draft-judgment`, `analyze-hearing` добавлены в зону действия (`conventions.md`) + блоки обязательной сверки сумм/реквизитов/цитат по первоисточнику перед подачей (F6.8, F6.20, F6.25).
+- **catalog (Chunk C):** fallback `.xlsx` → `.md` при недоступности xlsx/openpyxl (F6.19 — ломал первый прогон), колонка `ID (doc-id)` (F6.18), обработка Excel/OneDrive-лока → `_v2` (F6.29), секция «Постусловия» (F6.28).
+- **update-index (Chunk D):** детект устаревших зеркал по `content_hash`, а не по mtime (недостоверен на OneDrive) (F6.22).
+- **notion-sync (Chunk E):** маппинг `case.status` пополнен `settled/withdrawn/pending_settlement` (F6.21); `Истец/Ответчик` — прочерк для банкротства/особого производства (F6.31); реализован Notion-хук в `add-opponent` (F6.32); устранён дубль номера шага (F6.33).
+- **cassation (Chunk F):** перенос осиротевших просительной/приложений из секции `ruling_settlement` в стандартную (F6.1 — устранён риск отмены несуществующего акта); срок-предупреждение ветвится по `target` (ruling_settlement → ст. 141 ч. 11, 1 мес.) (F6.3); рабочий `[doc-NNN]`-источник для `build-submission` = §7 prep-артефакта (F6.5); коллизия имени `.md` той же даты → `-{ЧЧММ}` + supersedes (F6.11).
+- **Косметика P2/P3 (Волна 2):** enum `case.cassation.instance` +КСОЮ/СКГД (ГПК) (F6.6); норма прекращения ИП ст. 43 ч. 1 → ч. 2 п. 3 ФЗ-229 (F6.9); честная формулировка анти-триггера ст. 150 АПК в `settlement` (F6.10); предупреждение клиенту о необратимости признания иска (F6.14); секции «Постусловия» в `add-opponent`/`analyze-hearing` (F6.23, F6.27); теги `[doc-NNN]` только в рабочей версии проекта решения (F6.30).
+
+### Changed (WS-7 — документация)
+
+- `README.md` — счётчики «Скиллы (12)» → 17, «Slash-команды (13)» → 17; в таблицу и дерево дописаны `init-case`, `settlement`, `build-submission`, `backfill-global`, `notion-sync` (F7.1).
+- `ARCHITECTURE.md` — убраны 3 несуществующих скрипта (`create_mirror.py`/`update_index.py`/`generate_table.py`); дерево `scripts/` приведено к факту (F7.2); «Версия архитектуры» → 0.8.0 (F7.3).
+- `.claude-plugin/plugin.json` — версия `0.7.0` → `0.8.0`.
+
+### Notes
+
+- **Аудит №2 структурно завершён (WS-1..7):** WS-1 профили юрисдикции/категории · WS-2 Cowork-закалка · WS-3 OCR-модуль · WS-4 межскилл + verify-before-assert · WS-5 build-submission · WS-6 статика 8 скиллов + фиксы · WS-7 документация. WS-8 (Notion: переавторизация + рантайм-тест) отложен — требует действий в Notion на стороне Сюзерена.
+- WS-7 F7.4 (классификация релевантности references) и F7.6 (терминология Notion-сущностей) осознанно отложены; F7.5 (мёртвый код) не подтвердилось.
+- Backlog: `OPEN-ITEMS` **B.20** — новый скилл подготовки досудебной претензии (идея Сюзерена).
+- Деталь — `reviews/audit-2/WS-6-static-audit.md`, `reviews/audit-2/WS-0-triage-spine.md`.
+
+---
+
 ## [vassal-litigator] 0.7.0 — WS-5: новый скилл build-submission («На подачу») -- 2026-06-17
 
 ### Added
