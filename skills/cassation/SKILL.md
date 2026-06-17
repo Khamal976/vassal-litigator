@@ -509,7 +509,8 @@ fallback_arbitrum_docx: false | true
 
 **25. Обнови `.vassal/case.yaml`:**
 - Добавь событие в `case.timeline`: подготовка кассационной жалобы (с указанием инстанции).
-- Обнови `case.cassation.filed_date` (если жалоба фактически подана), `case.status: pending_cassation`.
+- Запиши расчётные поля блока `case.cassation` (схема закрепляет их за cassation, case-schema.yaml:327-352): `target` (фаза 0), `instance` (ветвление), `deadline` (срок из фазы 2), `origin: computed`, `_set_by: cassation`, `_set_date` (ISO). Для `target != 'judgment_with_appeal'` -- `appealed_ruling_doc_id` = doc-id обжалуемого определения (если `case.settlement.court_ruling_id` пуст -- добрать по типу + дате в `index.yaml`).
+- `case.cassation.filed_date` -- если жалоба фактически подана; `case.status: pending_cassation`.
 
 **26. Обнови `.vassal/history.md`.** В записи укажи:
 - Имя `.md` жалобы и `.docx` (или только `.md` в fallback-режиме).

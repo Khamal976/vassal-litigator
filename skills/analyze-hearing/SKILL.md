@@ -122,9 +122,14 @@ description: >
    - **Слабости оппонента** -- главные находки (2-3 пункта)
    - Предлагаемые изменения в case.yaml:
      - Новые события в timeline (с пометкой `source: transcript`)
-     - Дата следующего заседания (если озвучена)
+     - Дата следующего заседания (если озвучена) -- с `next_hearing_source: transcript`
      - Приобщенные документы
-     - Изменение статуса дела (если есть)
+     - **Исход заседания** (если суд огласил процессуальный результат -- детект по транскрипции):
+       - утверждение мирового → `settlement.confirmed_date` = дата заседания, `case.status: settled`, `settlement.in_progress: false`, приобщённое определение → `settlement.court_ruling_id`;
+       - принятие отказа от иска → `case.status: withdrawn` + `settlement.confirmed_date`, `in_progress: false`;
+       - принятие признания иска → отметить (ведёт к решению; отдельного статуса нет);
+       - заседание апелляции/кассации → `appeal.{hearing_date, ruling_date, result}` / `cassation.{hearing_date, ruling_date, result}`.
+     - Изменение статуса дела (иное, если есть)
    - Пометки `[?]` -- сомнительные данные из транскрипции
    - Если есть сверка с протоколом -- рекомендация о подаче замечаний
 
@@ -159,8 +164,13 @@ description: >
     - В обоих случаях: инкрементируй `hearings_analyzed` на 1; добавь `case.number` в `cases:` (без дублей); обнови `representatives:` если выявлены новые ФИО, `last_updated`, `last_case`.
     - **Сбой записи**: не падай -- зафиксируй локальный `opponent-hearing-*.md`, предупреди Сюзерена, отметь в `.vassal/history.md`.
 
-11. Обнови `.vassal/case.yaml` (только подтвержденные изменения).
-12. Если в заседании приобщены новые документы -- добавь записи в `index.yaml` с пометкой `source: court` или соответствующей стороны.
+11. Обнови `.vassal/case.yaml` (только подтверждённые изменения). Помимо `timeline` и `next_hearing` (+`next_hearing_source: transcript`) -- при оглашённом судом процессуальном исходе записать поля, которые схема закрепляет за analyze-hearing (case-schema.yaml:240-241, 306, 325):
+    - **Мировое утверждено:** `case.settlement.confirmed_date` = дата заседания, `case.settlement.in_progress: false`, `case.status: settled`.
+    - **Отказ от иска принят:** `case.settlement.confirmed_date` = дата заседания, `case.settlement.in_progress: false`, `case.status: withdrawn`.
+    - **Признание иска принято:** запись в `timeline` (отдельного статуса нет -- решение по существу даёт обычную цепочку, case-schema.yaml:73-74).
+    - **Заседание проверочной инстанции:** `case.appeal.{hearing_date, ruling_date, result}` либо `case.cassation.{hearing_date, ruling_date, result}` по оглашённому + `_set_by: analyze-hearing`, `_set_date` (ISO).
+    Исход, который суд не огласил, не записывай -- при сомнении помечай `[?]` и спрашивай.
+12. Если в заседании приобщены новые документы -- добавь записи в `index.yaml` с пометкой `source: court` или соответствующей стороны. **Определение об утверждении мирового / о прекращении производства** -- свяжи его с карточкой: `case.settlement.court_ruling_id` = doc-id (cassation читает это поле для срока по ст. 141 ч. 11).
 13. Обнови `.vassal/history.md`. В записи укажи: создан/обновлён локальный `judge-profile.md`; обновлены глобальные профили `$VASSAL_GLOBAL_DIR/judges/{slug}.md` и (если применимо) `$VASSAL_GLOBAL_DIR/counterparties/{slug}.md` (или: глобальная память недоступна -- {причина}).
 
 ### Фаза 6.5 -- Опциональный хук: синхронизация с Notion

@@ -384,11 +384,11 @@ Settlement -- ортогонален обычному состязательно
 
 28. **Проекты документов** -- сводный `.md` для Сюзерена и краткое описание содержания `.docx`-ов.
 
-29. **Изменения в `case.yaml`**:
-    - `case.settlement.mode`, `initiator`, `stage`, `draft_date` -- проставлены.
-    - `case.settlement.in_progress` -- переход в `true`.
-    - `case.status` -- переход в `pending_settlement` (для `agreement` и `withdrawal`; для `admission` -- `status` пока не меняем, дождёмся решения суда).
-    - `case.timeline` -- новая запись «Подготовлен проект {mode} соглашения / заявления».
+29. **Изменения в `case.yaml`** (зависят от пути из фазы 0):
+    - **Драфт** (вариант (а)/(б)): `case.settlement.{mode, initiator, stage, draft_date}` проставлены, `in_progress → true`; `case.status → pending_settlement` (для `agreement`/`withdrawal`; для `admission` статус не меняем -- дождёмся решения суда).
+    - **Фиксация завершения** (вариант (в) -- запасной путь; штатно исход заседания пишет `analyze-hearing`): `case.settlement.confirmed_date` = дата определения/решения, `in_progress → false`; `case.status → settled` (`agreement`) / `withdrawn` (`withdrawal`); `court_ruling_id` -- если определение в индексе.
+    - **Отмена** (вариант (г)): `in_progress → false`, `case.status` → прежний.
+    - `case.timeline` -- новая запись.
 
 30. **Выбор формы подачи ходатайства** (только для `mode='agreement'`) -- три опции:
     - (i) **Одностороннее от нашего клиента** (default) -- ходатайство подписывает только наш клиент; в просительной части указывает согласие оппонента и прилагает подписанное мировое.
@@ -400,7 +400,7 @@ Settlement -- ортогонален обычному состязательно
 
 32. **Уведомление о next steps**:
     - Что Сюзерену сделать дальше (подписать, согласовать с оппонентом, подать в суд).
-    - Какой следующий запуск скилла нужен (после утверждения судом -- зафиксировать `confirmed_date`, перейдя в режим `in_progress=true` → фаза 0 вариант (в)).
+    - Какой следующий запуск скилла нужен (после утверждения судом исход штатно фиксирует `analyze-hearing` при разборе заседания; либо вручную здесь -- фаза 0 вариант (в): `confirmed_date` + `in_progress=false`).
 
 Дождись подтверждения Сюзерена.
 
@@ -420,11 +420,11 @@ Settlement -- ортогонален обычному состязательно
 
 35. **Сохранить машинно-читаемые секции** в `.vassal/analysis/settlement-{ГГГГ-ММ-ДД}-{batna, zone-of-agreement, opponent-forecast, risks, terms-draft}.md` -- с frontmatter по правилу двухуровневого сохранения.
 
-36. **Обновить `case.yaml`** (только зоны своего ownership, см. [shared/conventions.md](../../shared/conventions.md) → «Ownership полей case.yaml»):
-    - `case.settlement.{mode, initiator, stage, draft_date, in_progress=true}`.
-    - `case.status`:
-      - Для `mode='agreement'` или `'withdrawal'` → `pending_settlement` (если до подачи в суд) или `settled` / `withdrawn` (если фиксируем уже состоявшееся утверждение -- редкий путь, обычно через фазу 0 вариант (в)).
-      - Для `mode='admission'` → `status` пока не меняем; обновление статуса -- задача `analyze-hearing` после заседания, на котором суд примет решение по существу.
+36. **Обновить `case.yaml`** (только зоны своего ownership, см. [shared/conventions.md](../../shared/conventions.md) → «Ownership полей case.yaml»; набор полей -- по варианту фазы 0):
+    - **Драфт** (вариант (а)/(б)): `case.settlement.{mode, initiator, stage, draft_date}`, `in_progress: true`; `case.status → pending_settlement` (для `agreement`/`withdrawal`, если до подачи); для `mode='admission'` статус не меняем.
+    - **Фиксация состоявшегося завершения** (вариант (в) -- запасной ручной путь, когда заседание не разбирается через `analyze-hearing`): `case.settlement.confirmed_date` = дата определения/решения, `in_progress: false`; `case.status → settled` (`agreement`) / `withdrawn` (`withdrawal`); если определение в индексе -- `case.settlement.court_ruling_id` = его doc-id. *Штатный путь фиксации исхода заседания -- `analyze-hearing` (case-schema.yaml:240-241).*
+    - **Отмена трека** (вариант (г)): `in_progress: false`, `case.status` → прежний (`active`/...).
+    - `case.settlement.filed_date` -- проставить при фактической подаче ходатайства/заявления (если известна).
     - `case.timeline` -- append-only запись.
 
 37. **Обновить `index.yaml`** -- внесение новых `.md` / `.docx` как `doc-NNN` с двойными ссылками. Тип документа -- из таксономии: `мировое-соглашение` / `ходатайство-об-утверждении-мирового` / `заявление-об-отказе-от-иска` / `заявление-о-признании-иска` (см. [shared/conventions.md](../../shared/conventions.md) → «Таксономия типов документов»). `source` -- `client` (это наш документ); для двустороннего мирового -- тоже `client` (с пометкой в `tags` -- `двусторонний-документ`).
