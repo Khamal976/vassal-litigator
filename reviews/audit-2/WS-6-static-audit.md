@@ -154,7 +154,7 @@
 
 **Волна 1 — P1, системное:**
 - **Chunk A — C1 «поля без писателя» ✅ ЗАКРЫТ 2026-06-17** (центральный; схему НЕ меняли — приведение скиллов к уже зафиксированному контракту v6): `analyze-hearing` записывает итоги заседания (`settlement.confirmed_date`/`status`/`court_ruling_id`; `appeal/cassation.hearing_date`/`ruling_date`/`result`; `next_hearing_source` — F6.17, F6.4, F6.24, F6.26, чинит F6.7) + `cassation` дописывает расчётные `target/instance/deadline/origin/_set_by/_set_date/appealed_ruling_doc_id` (F6.2, F6.4) + `settlement` apply путь-зависим, реально пишет `confirmed_date/in_progress=false/status` + `filed_date` (F6.7, F6.13) + `add-opponent` дедуп по `content_hash`→`duplicate_copies` + `next_bundle_id` (F6.15, F6.16) + `update-index` сброс `mirror_stale=false` (F6.34).
-- **Chunk B — C3 verify-before-assert:** добавить `settlement` + `draft-judgment` (+ `analyze-hearing` для замечаний) в зону conventions.md:726 + блоки сверки сумм/реквизитов в их SKILL (F6.8, F6.20, F6.25).
+- **Chunk B — C3 verify-before-assert ✅ ЗАКРЫТ 2026-06-17:** `settlement` + `draft-judgment` + `analyze-hearing` (замечания) добавлены в зону conventions.md:726; блоки сверки сумм/реквизитов/цитат в их SKILL зеркалят эталон prepare-hearing:335 (F6.8, F6.20, F6.25).
 - **Chunk C — catalog:** fallback `.xlsx`→`.md` (F6.19 — ломает прогон) + колонка ID (F6.18) + Excel-lock (F6.29) + «Постусловия» (F6.28).
 - **Chunk D — update-index:** детект устаревших зеркал по `content_hash`, не mtime (F6.22).
 - **Chunk E — notion-sync:** маппинг `status` (F6.21) + банкротные колонки (F6.31) + убрать ложный авто-триггер (F6.32) + дубль шага (F6.33).
