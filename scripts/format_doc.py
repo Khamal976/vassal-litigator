@@ -596,9 +596,9 @@ def _emit_table(doc, rows):
         for ci in range(ncol):
             cell = table.rows[ri].cells[ci]
             txt = row[ci] if ci < len(row) else ""
-            cell.text = ""
-            para = cell.paragraphs[0]
+            para = cell.paragraphs[0]      # свежая ячейка: пустой абзац без runs
             para.paragraph_format.space_after = Pt(12)
+            para.paragraph_format.line_spacing = 1.0   # ячейки таблиц — single (style-spec §1)
             # выравнивание: числовые -> Right
             if _is_numeric(txt) and not is_header:
                 para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
