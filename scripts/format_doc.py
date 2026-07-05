@@ -788,9 +788,23 @@ def _table_autofit_layout(table):
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
+    # Word позиционирует таблицу по КРАЮ ТЕКСТА первой ячейки, а не по границе:
+    # при tblInd=0 граница уходит влево от текста на левое поле ячейки. Ставим
+    # tblInd = левому полю ячейки → граница садится ровно на поле полосы (уровень текста).
+    cell_left = 108   # twips ≈ 0.19 см (стандартное левое поле ячейки Word)
     _tblpr_set(tblPr, "w:tblW", {"w:w": "0", "w:type": "auto"})
-    _tblpr_set(tblPr, "w:tblInd", {"w:w": "0", "w:type": "dxa"})
+    _tblpr_set(tblPr, "w:tblInd", {"w:w": str(cell_left), "w:type": "dxa"})
     _tblpr_set(tblPr, "w:tblLayout", {"w:type": "autofit"})
+    # зафиксировать поля ячеек, чтобы компенсация tblInd была точной
+    cm = _tblpr_set(tblPr, "w:tblCellMar", {})
+    for ch in list(cm):
+        cm.remove(ch)
+    for side, w in (("top", "0"), ("left", str(cell_left)),
+                    ("bottom", "0"), ("right", str(cell_left))):
+        m = OxmlElement("w:" + side)
+        m.set(qn("w:w"), w)
+        m.set(qn("w:type"), "dxa")
+        cm.append(m)
     grid = tbl.find(qn("w:tblGrid"))
     if grid is not None:
         for gc in grid.findall(qn("w:gridCol")):
