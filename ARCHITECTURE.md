@@ -2,7 +2,7 @@
 
 > Плагин для помощи юристу в ведении судебных дел: от приёма документов клиента до кассационной жалобы.
 
-**Версия архитектуры:** 0.11.0
+**Версия архитектуры:** 0.12.0
 **Дата:** 2026-03-30
 **Ревизия:** 2026-05-31 (B.3 v1 -- полугодовая сверка `legal-review/references/`; B.12 -- новый `appeal/references/permissible-grounds.md`; B.13 -- новый `legal-review/references/production-types.md`; B.14 -- новая директория `build-position/references/` + `key-doctrines.md` по ППВС № 46; B.15 -- новый `legal-review/references/judgment-standards.md` по ППВС № 23 в ред. 09.12.2025). См. также: предыдущая ревизия 2026-05-30 (B.2 -- skill `settlement`, расширение `cassation` под ст. 141 АПК, case-schema v3→v4).
 
@@ -61,6 +61,8 @@ plugins/vassal-litigator/
 │   │   └── SKILL.md
 │   ├── build-position/            ← Выработка правовой позиции
 │   │   └── SKILL.md
+│   ├── revise-position/           ← Обратное распространение правок позиции (леджер отзывов)
+│   │   └── SKILL.md
 │   ├── prepare-hearing/           ← Подготовка к заседанию / процессуальных документов
 │   │   └── SKILL.md
 │   ├── analyze-hearing/           ← Анализ транскрипции заседания
@@ -104,6 +106,7 @@ plugins/vassal-litigator/
 │   ├── add-opponent.md            ← /vassal-litigator:add-opponent
 │   ├── update-index.md            ← /vassal-litigator:update-index
 │   ├── build-position.md          ← /vassal-litigator:build-position
+│   ├── revise-position.md         ← /vassal-litigator:revise-position
 │   ├── prepare-hearing.md         ← /vassal-litigator:prepare-hearing
 │   ├── analyze-hearing.md         ← /vassal-litigator:analyze-hearing
 │   ├── draft-judgment.md          ← /vassal-litigator:draft-judgment
@@ -1004,6 +1007,16 @@ OCR концептуально отделён от LLM. Сначала прог�
 
 Headless-замена отсутствующего в Cowork `arbitrum-docx` и Word-аддинного `proc-doc-style`. **Детерминированно и идемпотентно** (тот же `.md` → тот же `.docx`; снимает дефект «повторный прогон = разное оформление»). Декларативная спецификация стиля — [skills/format-doc/references/style-spec.md](skills/format-doc/references/style-spec.md) (полный порт `proc-doc-style`: §0 критический чек-лист + §1-9). Покрывает **документы стороны** (жалоба / отзыв / ходатайство / заявление / возражение / пояснения / замечания на протокол / претензия); мировое соглашение, проект решения и отчёт клиенту — иная структура (прежний путь). **E.1 закрыт (v0.11.0):** интеграция выполнена по модели **late-binding** — `.docx` печатается в двух точках (`prepare-hearing` + `build-submission`, из финального `.md`); `appeal` / `cassation` / `settlement` / `analyze-hearing` выдают подаваемый `.md`. Детали — §10.
 
+### 8.19. revise-position — Обратное распространение правок позиции
+
+**Тип:** скилл + команда (`/vassal-litigator:revise-position`)
+**Модель:** Opus (семантический скан служебного слоя + регенерация затронутых секций позиции) + Sonnet (захват/классификация правки, preview, запись леджера / history / баннера)
+**Вход:** дельта-правка от Сюзерена (что отозвано / чем заменено / почему); `.vassal/analysis/` + `.vassal/hearings/`; последняя `*позиция.md`; существующий `retractions.md`
+**Выход:** `.vassal/analysis/retractions.md` — леджер отзывов (живой **append-only**); опц. регенерированные `position-*`-секции (supersedes); баннер «ОТОЗВАНО» в сводной позиции; флаг index/зеркал для `update-index`
+**Зависимости:** read-хук в `build-position` / `prepare-hearing` / `appeal` / `cassation` / `settlement` (они чтут леджер); авто-предложение из `prepare-hearing` / `build-position`
+
+Служебный скилл с аналитическим ядром: замыкает петлю обратного распространения правок. `.vassal/` — многофайловый слой истины **без «текущего среза»**; правка позиции по ходу дела делает финальный документ верным, но служебный слой остаётся со старыми выводами, и следующий скилл их **воскрешает** (типичный провал: `build-position` грузит весь `analysis/` скопом). Скилл принимает дельту-правку, семантически находит следы отозванного в служебном слое, пишет **леджер отзывов** `retractions.md`, который потребители читают как фильтр (read-хук). Факты/сущности в `index.yaml`/зеркалах только **флагует** (граница с E.8; зеркала verbatim). Полная переработка позиции — `build-position`, не здесь. **Закрывает E.2.** Детали — [shared/conventions.md](shared/conventions.md) → «Леджер отзывов позиции (revise-position)».
+
 ---
 
 ## 9. Взаимосвязи скиллов
@@ -1045,6 +1058,8 @@ add-opponent            │
 **Ответвления (примирительный трек):** `settlement` может быть запущен на любой стадии — из `prepare-hearing` (через хук в фазе 2 п.13), из `build-position` (когда анализ позиции даёт «слабо, лучше уступить»), напрямую (когда оппонент прислал проект мирового). Возможные стадии — `1inst / appeal / cassation / enforcement` (ст. 139 АПК). Поток замыкается на `case.status` (settled / withdrawn) или, при обжаловании определения об утверждении мирового, уходит в `cassation` с `target='ruling_settlement'`.
 
 **Аналитический шаг (study-evidence)** -- между `intake` и `legal-review` / `build-position`: собирает фактологическое досье (`.vassal/analysis/evidence-dossier.md`) с фактами со ссылкой на лист, которое нижестоящие скиллы читают вместо поверхностного summary. `legal-review`, `build-position`, `prepare-hearing` при отсутствии досье предлагают его собрать (хук, не блокирует). См. §8.17.
+
+**Обратное распространение правок (revise-position)** -- служебный проход между генерирующими скиллами: когда позиция правится по ходу дела, `revise-position` пишет леджер отзывов `.vassal/analysis/retractions.md`, а `build-position`, `prepare-hearing`, `appeal`, `cassation`, `settlement` читают его как **фильтр отозванного** (read-хук) -- чтобы отозванный вывод не воскрес из осевшего в служебном слое старого состояния. `prepare-hearing` / `build-position` при правке в драфте **предлагают** прогнать `revise-position` (не блокируя). Закрывает **E.2**. См. §8.19 и [shared/conventions.md](shared/conventions.md) → «Леджер отзывов позиции».
 
 **Глобальная память (кросс-дельная)** -- ортогональный слой, общий для всех дел (см. раздел 15). Основные потоки данных через неё:
 - `analyze-hearing`, `draft-judgment` → `$VASSAL_GLOBAL_DIR/judges/` (двойная запись профиля судьи).

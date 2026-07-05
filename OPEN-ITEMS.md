@@ -490,7 +490,7 @@
 
 ---
 
-### E.2. 🔴 Правки позиции не распространяются на память дела `.vassal/` ⏳
+### E.2. 🔴 Правки позиции не распространяются на память дела `.vassal/` ✅
 
 **Где:** [skills/build-position/SKILL.md](skills/build-position/SKILL.md), [skills/prepare-hearing/SKILL.md](skills/prepare-hearing/SKILL.md); кандидат -- новый служебный скилл `revise-position`.
 
@@ -499,6 +499,8 @@
 **Что делать:** механизм обратного распространения правок. Варианты: (а) команда `/revise-position "новая вводная"` -- обновляет analysis-файлы и помечает устаревшее; (б) в build-position/prepare-hearing режим «дельта-обновление» вместо генерации с нуля; (в) минимум -- журналировать в `history.md` «выводы X, Y отозваны». Родственно E.8 (правка текста не доходит до индекса/зеркал).
 
 **Источник:** 22.06 (ОСК↔ФССП) §1, §3.5, §5.
+
+**✅ Закрыто 2026-07-05 (v0.12.0):** развёрнут служебный скилл `revise-position`. Развилки согласованы Сюзереном через AskUserQuestion (форм-фактор / глубина / триггер — все по рекомендации: отдельный скилл; **леджер + read-хук**; ручная команда + авто-предложение). Файлы: [skills/revise-position/SKILL.md](skills/revise-position/SKILL.md) + [commands/revise-position.md](commands/revise-position.md). Механизм: **леджер отзывов** `.vassal/analysis/retractions.md` (append-only, как `judge-profile.md`) ← пишет `revise-position`; **read-хук** в `build-position` / `prepare-hearing` / `appeal` / `cassation` / `settlement` (фильтр отозванного до принятия слоя за истину; канонический текст в `conventions.md` → «Леджер отзывов позиции»); **авто-предложение** в `prepare-hearing` (Фаза 5) / `build-position` (Фаза 3) при правке в драфте; опц. регенерация затронутых `position-*`-секций (supersedes). Обвязка: `conventions.md` (новый раздел + матрицы), `ARCHITECTURE.md` §8.19/§9/деревья/версия 0.12.0, `README.md` 19→20, `CHANGELOG.md` 0.12.0, `plugin.json`. Варианты E.2: (а) команда — реализована; (б) дельта-обновление — как опц. регенерация секций; (в) минимум-журнал в `history.md` — как побочный эффект apply. **Граница с E.8:** факты/сущности в `index.yaml`/зеркалах только флагуются → `update-index`, зеркала verbatim не переписываются. **Late-binding E.1 не покрывал ядро E.2** (то про слой аналитики, не про печать `.docx`). Деталь — [reviews/revise-position-proposal.md](reviews/revise-position-proposal.md), CHANGELOG 0.12.0. Развилки #2/#3 подтверждены Сюзереном: регенерация секций — опция (по умолч. выкл., леджер+хук уже замыкают петлю); факты/сущности в index/зеркалах — флаг → `update-index` (зеркала verbatim). → перенос в §D. Верификация: 20 скиллов/20 команд, все `description` ≤ 1024, read-хук у 5, авто-предложение у 2.
 
 ---
 
@@ -707,6 +709,10 @@
 ## D. Закрытые пункты (история)
 
 *(этот раздел растёт по мере закрытия пунктов выше; перенос из пунктов A/B/C сюда с пометкой когда + какой коммит)*
+
+### E.2 ✅ revise-position — обратное распространение правок позиции (2026-07-05, v0.12.0)
+
+Развёрнут служебный скилл `revise-position` (SKILL.md + команда). Закрывает **E.2**: правки позиции по ходу дела не доходили до служебного слоя `.vassal/` → следующий скилл воскрешал отозванное. Механизм: **леджер отзывов** `.vassal/analysis/retractions.md` (append-only) ← пишет `revise-position`; **read-хук** в `build-position` / `prepare-hearing` / `appeal` / `cassation` / `settlement` (фильтр отозванного, канонический текст в `conventions.md` → «Леджер отзывов позиции»); **авто-предложение** (не блок.) в `prepare-hearing` / `build-position` при правке в драфте; опц. регенерация затронутых `position-*`-секций (supersedes, по умолч. выкл.). Граница с E.8: факты/сущности в `index.yaml`/зеркалах только флагуются → `update-index` (зеркала verbatim). Обвязка: `conventions.md`, `ARCHITECTURE.md` §8.19/§9/деревья, `README.md` 19→20, CHANGELOG 0.12.0, `plugin.json`. Развилки согласованы Сюзереном (AskUserQuestion). Деталь — `reviews/revise-position-proposal.md`, CHANGELOG 0.12.0.
 
 ### E.1 ✅ format-doc — интеграция в пайплайн (late-binding .docx) (2026-07-05, v0.11.0)
 
