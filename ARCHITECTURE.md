@@ -2,7 +2,7 @@
 
 > Плагин для помощи юристу в ведении судебных дел: от приёма документов клиента до кассационной жалобы.
 
-**Версия архитектуры:** 0.9.0
+**Версия архитектуры:** 0.10.0
 **Дата:** 2026-03-30
 **Ревизия:** 2026-05-31 (B.3 v1 -- полугодовая сверка `legal-review/references/`; B.12 -- новый `appeal/references/permissible-grounds.md`; B.13 -- новый `legal-review/references/production-types.md`; B.14 -- новая директория `build-position/references/` + `key-doctrines.md` по ППВС № 46; B.15 -- новый `legal-review/references/judgment-standards.md` по ППВС № 23 в ред. 09.12.2025). См. также: предыдущая ревизия 2026-05-30 (B.2 -- skill `settlement`, расширение `cassation` под ст. 141 АПК, case-schema v3→v4).
 
@@ -85,6 +85,10 @@ plugins/vassal-litigator/
 │   │       └── terms-checklist.md ← Чек-лист условий мирового
 │   ├── build-submission/          ← Сборка нумерованного комплекта на подачу
 │   │   └── SKILL.md
+│   ├── format-doc/                ← Headless-оформление .docx по фирменной типографике
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       └── style-spec.md      ← Декларативная спецификация стиля (порт proc-doc-style)
 │   ├── backfill-global/           ← Разовый перенос локальной аналитики в глобальную
 │   │   └── SKILL.md
 │   └── notion-sync/               ← Синхронизация с Notion (Cases + Judges, push)
@@ -94,6 +98,7 @@ plugins/vassal-litigator/
 │   ├── intake.md                  ← /vassal-litigator:intake
 │   ├── catalog.md                 ← /vassal-litigator:catalog
 │   ├── study-evidence.md          ← /vassal-litigator:study-evidence
+│   ├── format-doc.md              ← /vassal-litigator:format-doc
 │   ├── legal-review.md            ← /vassal-litigator:legal-review
 │   ├── add-evidence.md            ← /vassal-litigator:add-evidence
 │   ├── add-opponent.md            ← /vassal-litigator:add-opponent
@@ -989,6 +994,16 @@ OCR концептуально отделён от LLM. Сначала прог�
 **Зависимости:** `shared/ocr.md` (полнотекст сканов); хук-предложение в `legal-review` / `build-position` / `prepare-hearing` (не блокирует)
 
 Аналитический шаг между `intake` и `legal-review` / `build-position`: читает фактуру ключевых доказательств **полнотекстно** (не summary), извлекает факты (даты, суммы, роли, обязательства) **со ссылкой на лист**, кросс-сверяет реквизиты / суммы / хронологию, поднимает «зарытые» факты из глубины больших документов. Даёт нижестоящим скиллам доверенную фактическую опору — закрывает **E.3** (позиции без ссылок на доказательства), вбирает дисциплину достоверности **E.13**. Кредо — факты, не право и не тактика (право — `legal-review`, стратегия — `build-position`). `case.yaml` не пишет (чистый читатель). Кэш по `content_hash`: vision по неизменившимся документам не гоняется.
+
+### 8.18. format-doc — Headless-оформление .docx
+
+**Тип:** скилл + команда (`/vassal-litigator:format-doc`)
+**Модель:** Sonnet (разбор `.md` по контракту, preview, валидация); рендер — детерминированная python-нога `scripts/format_doc.py`, **без модели**
+**Вход:** готовый подаваемый `.md` (tag-free) + тип документа; `case.yaml` (для сборки шапки)
+**Выход:** `{имя .md}.docx` в корне дела по фирменной типографике (Garamond 11, интервал 1.15, шапка, автонумерация доводов, приложения, подпись, таблицы с автоподбором); `_v2` при заблокированном целевом
+**Зависимости:** `python-docx` (ставит `setup.sh`); при недоступности — fallback `.md` + предупреждение (не импровизировать)
+
+Headless-замена отсутствующего в Cowork `arbitrum-docx` и Word-аддинного `proc-doc-style`. **Детерминированно и идемпотентно** (тот же `.md` → тот же `.docx`; снимает дефект «повторный прогон = разное оформление»). Декларативная спецификация стиля — [skills/format-doc/references/style-spec.md](skills/format-doc/references/style-spec.md) (полный порт `proc-doc-style`: §0 критический чек-лист + §1-9). Покрывает **документы стороны** (жалоба / отзыв / ходатайство / заявление / возражение / претензия); мировое соглашение и проект решения — иная структура, отдельные шаблоны (пока прежний путь). Закрывает **E.1**: standalone-скилл готов и валидирован; интеграция в скиллы-генераторы (`appeal` / `cassation` / `prepare-hearing` / `settlement`) взамен feature-detection `arbitrum-docx` — вкатывается.
 
 ---
 

@@ -14,7 +14,7 @@
 
 **Обжалование** — подготовка апелляционных и кассационных жалоб с систематическим поиском оснований по АПК/ГПК РФ, проект судебного решения с учётом стиля конкретного судьи.
 
-## Скиллы (18)
+## Скиллы (19)
 
 | Фаза | Скилл | Описание |
 |------|-------|----------|
@@ -33,7 +33,8 @@
 | Обжалование | `draft-judgment` | Проект судебного решения |
 | | `appeal` | Апелляционная жалоба |
 | | `cassation` | Кассационная жалоба |
-| На подачу | `build-submission` | Сборка нумерованного комплекта на подачу |
+| На подачу | `format-doc` | Оформление .docx по фирменной типографике (headless, детерминированно) |
+| | `build-submission` | Сборка нумерованного комплекта на подачу |
 | Sync | `notion-sync` | Опц. push метаданных дел и профилей судей в Notion (Cases + Judges) |
 | | `backfill-global` | Разовый перенос локальной аналитики в глобальную память |
 
@@ -86,8 +87,8 @@ chmod +x scripts/setup.sh
 vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
-├── commands/                 # Slash-команды (18)
-├── skills/                   # Скиллы (18)
+├── commands/                 # Slash-команды (19)
+├── skills/                   # Скиллы (19)
 │   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
@@ -105,6 +106,7 @@ vassal-litigator/
 │   ├── appeal/
 │   ├── cassation/
 │   ├── build-submission/
+│   ├── format-doc/             # Headless-оформление .docx (references/style-spec.md)
 │   ├── backfill-global/
 │   └── notion-sync/
 ├── shared/                   # Общие схемы и конвенции
