@@ -1,3 +1,32 @@
+## [vassal-litigator] 0.11.0 — Интеграция format-doc в пайплайн (late-binding .docx) -- 2026-07-05
+
+Вторая фаза **E.1**: готовый `format-doc` подключён в пайплайн взамен feature-detection `arbitrum-docx`. Модель — **late-binding**: `.docx` печатается **в двух точках** (`prepare-hearing` — документ к заседанию; `build-submission` — сборка на подачу, из финального `.md`), а `appeal` / `cassation` / `settlement` выдают подаваемый `.md`. Это конструктивно снимает риск подать устаревший `.docx` (закрывает боль E.2 / E.4: правки в `.md` дёшевы, `.docx` рождается один раз и не отстаёт).
+
+### Changed
+
+- **`shared/conventions.md`** — DRY-ядро: новый раздел **«Где печатается `.docx`» (late-binding, две точки)**; раздел «Внешние зависимости и fallback» переписан (порядок движков: `format-doc`/`python-docx` основной → `arbitrum-docx` опц. → `.md`-only терминальный; шаблон предупреждения про `python-docx`; убрано самопротиворечие «не пробуй python-docx»); продуктовые строки `appeal`/`cassation`/`settlement` и постусловия категории 3 приведены к late-binding.
+- **`skills/build-submission/SKILL.md`** — **основной хост печати**: слот `00` теперь печатает `.docx` через `format-doc` из финального подаваемого `.md` (замена прежнего отбоя «оформление делается в скилле-генераторе»); мировое соглашение — исключение (двусторонний, вне охвата); нет `python-docx` → `.md` + предупреждение.
+- **`skills/prepare-hearing/SKILL.md`** — Фаза 6: движок оформления → `format-doc` (`--type` по документу); `.md`-fallback терминальный; поле `formatting_engine` вместо `fallback_arbitrum_docx`; `related_docx` без «Клиент».
+- **`skills/appeal/SKILL.md` · `skills/cassation/SKILL.md` · `skills/settlement/SKILL.md`** — фаза оформления → выдача подаваемого `.md` (tag-free, по якорному контракту `format-doc`); `.docx` откладывается до `build-submission`; сообщение Сюзерену + напоминание о сроке (appeal/cassation) / о ручном `/format-doc`. `settlement`: мировое соглашение — вне охвата `format-doc` (двусторонний).
+- **`skills/analyze-hearing/SKILL.md`** — «замечания на протокол» (процессуальный, 5-дневный срок) → подаваемый `.md` + печать на `build-submission` / немедленный ручной `/format-doc`; отчёт клиенту (аналитический, Тип 2) — вне охвата `format-doc`, прежний путь.
+- **`skills/format-doc/SKILL.md`** — описание/Границы: две точки печати (prepare-hearing + build-submission), late-binding; **новый `--type замечания-на-протокол`**.
+- **`skills/format-doc/references/style-spec.md`** — §2: структура «Замечания на протокол» (каркас отзыва, ПРОШУ внизу, перечень расхождений); §область дополнена.
+- **`scripts/format_doc.py`** — `TYPE_MAP` + докстринг: `замечания-на-протокол` → «иск-документ»; примечание, что структуру задаёт `.md`, а `--type` — шапку/лог.
+- **`ARCHITECTURE.md`** — §8 (appeal/cassation/settlement/analyze-hearing: оформление = late-binding через format-doc; build-submission — хост печати; §8.18 — интеграция выполнена); §10 переименован (format-doc основной, arbitrum-docx опц.); версия → 0.11.0.
+- **`README.md`** — генерация процессуальных документов через `format-doc` (не `arbitrum-docx`).
+- **`.claude-plugin/plugin.json`** — версия `0.10.0` → `0.11.0`.
+
+### Validated
+
+- **Смоук-тест `format_doc.py`** (python-docx 1.2.0, локально): рендер тестового `.md` через `--type жалоба` и `--type замечания-на-протокол` — оба `.docx` созданы (34 абзаца), новый тип корректно резолвится в «иск-документ» (ПРОШУ внизу). Скрипт компилируется чисто.
+
+### Notes
+
+- **Охват:** `prepare-hearing` / `appeal` / `cassation` / `settlement` (частично) / `analyze-hearing`/замечания. **Вне охвата `format-doc`** (прежний путь / ручное оформление): мировое соглашение (двусторонний), проект решения `draft-judgment` (судебный акт), отчёт клиенту `analyze-hearing` (аналитический).
+- Деталь дизайна и зоны сверки — `reviews/format-doc-integration-proposal.md`.
+
+---
+
 ## [vassal-litigator] 0.10.0 — Новый скилл format-doc (headless-оформление .docx) -- 2026-07-05
 
 ### Added

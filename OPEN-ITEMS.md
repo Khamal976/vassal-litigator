@@ -472,7 +472,7 @@
 
 ---
 
-### E.1. 🔴 `.docx`-путь в Cowork: `arbitrum-docx` недоступен, `proc-doc-style` только под Word-аддин ⏳
+### E.1. 🔴 `.docx`-путь в Cowork: `arbitrum-docx` недоступен, `proc-doc-style` только под Word-аддин ✅
 
 **Где:** [skills/prepare-hearing/SKILL.md](skills/prepare-hearing/SKILL.md) (фаза оформления), [skills/analyze-hearing/SKILL.md](skills/analyze-hearing/SKILL.md), [skills/settlement/SKILL.md](skills/settlement/SKILL.md), скилл `proc-doc-style`.
 
@@ -485,6 +485,8 @@
 **Обновление 2026-06-30 (Сюзерен, из практики):** подтверждает и уточняет -- `proc-doc-style` (а) **иногда не применяется вовсе** → форматирование «отсебятина»; (б) иногда **частично** → типографика различается местами; (в) **нет идемпотентности** → повторный прогон даёт разное оформление. **Решение (согласовано):** построить **собственный in-plugin скилл оформления** (рабочее имя `format-doc`) -- headless, детерминированный/идемпотентный, на движке `docx-js`, с перенесённой в него декларативной спецификацией стиля из `proc-doc-style`; не зависеть от Word-аддина. Это первичный путь закрытия E.1 (санкционирование `docx`/`docx-js` -- промежуточный минимум). Кандидат на отдельную детальную структуру → approve.
 
 **Сделано 2026-07-05 (v0.10.0) — STANDALONE ГОТОВ И ВАЛИДИРОВАН:** развёрнут in-plugin скилл `format-doc` (headless, **на `python-docx`, НЕ `docx-js`** — node в Cowork хрупок; движок уже ставит `setup.sh`). Файлы: [skills/format-doc/SKILL.md](skills/format-doc/SKILL.md) + [commands/format-doc.md](commands/format-doc.md) + [skills/format-doc/references/style-spec.md](skills/format-doc/references/style-spec.md) (полный порт `proc-doc-style`: §0 критчек-лист 14 пунктов + §1-9) + [scripts/format_doc.py](scripts/format_doc.py) (детерминированная нога рендера). **Локально прогнан и визуально принят Сюзереном** (python-docx 1.2.0): автонумерация с рестартом по блокам, границы Heading2/цитаты, заливки, автоперенос, A4, таблицы с автоподбором ширины и левой границей на уровне текста, место под подпись — работает. Обвязка (conventions «Продукты»/«Внешние зависимости», ARCHITECTURE §8.18, README, CHANGELOG v0.10.0) сделана. **Осталось (⏳):** интеграция в `appeal` / `cassation` / `prepare-hearing` / `settlement` взамен feature-detection `arbitrum-docx`; мировое соглашение и проект решения (`draft-judgment`) — иная структура, отдельная задача. Деталь — `reviews/format-doc-proposal.md`, CHANGELOG 0.10.0.
+
+**✅ Закрыто 2026-07-05 (v0.11.0) — ИНТЕГРАЦИЯ:** `format-doc` подключён в пайплайн по модели **late-binding** (`.docx` печатается в двух точках: `prepare-hearing` + `build-submission` из финального `.md`; `appeal`/`cassation`/`settlement` выдают подаваемый `.md`). Правки: `conventions.md` (новый раздел «Где печатается `.docx`» + переписан fallback-порядок: format-doc основной / arbitrum-docx опц. / `.md` терминальный), `build-submission` (слот `00` печатает `.docx` через `format-doc`), `prepare-hearing` (Фаза 6 → format-doc), `appeal`/`cassation`/`settlement` (выдача `.md`, `.docx` на подаче), `analyze-hearing`/замечания на протокол (включён, `--type замечания-на-протокол`), `format-doc` (две точки + новый тип), `style-spec §2`, `format_doc.py` (TYPE_MAP). Смоук-тест зелёный. **Late-binding конструктивно снимает риск устаревшего `.docx` (E.2/E.4).** **Вне охвата `format-doc`** (прежний путь): мировое соглашение (двусторонний), `draft-judgment` (судебный акт), отчёт клиенту `analyze-hearing`. Деталь — [reviews/format-doc-integration-proposal.md](reviews/format-doc-integration-proposal.md), CHANGELOG 0.11.0. → перенос в §D.
 
 ---
 
@@ -705,6 +707,10 @@
 ## D. Закрытые пункты (история)
 
 *(этот раздел растёт по мере закрытия пунктов выше; перенос из пунктов A/B/C сюда с пометкой когда + какой коммит)*
+
+### E.1 ✅ format-doc — интеграция в пайплайн (late-binding .docx) (2026-07-05, v0.11.0)
+
+Вторая фаза E.1 (после standalone v0.10.0). `format-doc` подключён взамен feature-detection `arbitrum-docx` по модели **late-binding**: `.docx` печатается в двух точках — `prepare-hearing` (документ к заседанию) и `build-submission` (сборка на подачу, из финального `.md`); `appeal` / `cassation` / `settlement` выдают подаваемый `.md`. Это конструктивно снимает риск подать устаревший `.docx` (родственно E.2 / E.4). `analyze-hearing`/замечания на протокол включены (`--type замечания-на-протокол`). Вне охвата `format-doc` (прежний путь): мировое соглашение, `draft-judgment`, отчёт клиенту. Правки: `conventions.md` (DRY-ядро), `build-submission` (хост печати), `prepare-hearing`, `appeal`, `cassation`, `settlement`, `analyze-hearing`, `format-doc` SKILL + `style-spec §2` + `format_doc.py`. Смоук-тест зелёный. Деталь — `reviews/format-doc-integration-proposal.md`, CHANGELOG 0.11.0.
 
 ### E.3 ✅ study-evidence -- новый скилл исследования доказательств (2026-07-05, v0.9.0)
 
