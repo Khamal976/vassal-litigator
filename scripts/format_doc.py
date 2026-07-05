@@ -749,29 +749,62 @@ def _enable_hyphenation(doc):
         settings.insert(0, el)
 
 
+# порядок дочерних элементов w:tblPr по ECMA-376 (иначе Word игнорирует свойства)
+_TBLPR_ORDER = [
+    "w:tblStyle", "w:tblpPr", "w:tblOverlap", "w:bidiVisual",
+    "w:tblStyleRowBandSize", "w:tblStyleColBandSize", "w:tblW", "w:jc",
+    "w:tblCellSpacing", "w:tblInd", "w:tblBorders", "w:shd", "w:tblLayout",
+    "w:tblCellMar", "w:tblLook", "w:tblCaption", "w:tblDescription",
+]
+
+
+def _tblpr_set(tblPr, tag, attrs):
+    """Найти/создать дочерний элемент tblPr и вставить в правильную по схеме позицию."""
+    el = tblPr.find(qn(tag))
+    if el is None:
+        el = OxmlElement(tag)
+        idx = _TBLPR_ORDER.index(tag)
+        after = None
+        for ex in tblPr:
+            extag = "w:" + ex.tag.split("}")[-1]
+            if extag in _TBLPR_ORDER and _TBLPR_ORDER.index(extag) > idx:
+                after = ex
+                break
+        if after is not None:
+            after.addprevious(el)
+        else:
+            tblPr.append(el)
+    for k, v in attrs.items():
+        el.set(qn(k), v)
+    return el
+
+
 def _table_autofit_layout(table):
-    """Правки 5, 6: таблица без левого отступа + автоподбор ширины по содержимому."""
-    tblPr = table._tbl.find(qn("w:tblPr"))
+    """Левая граница таблицы на уровне текста (tblInd=0 в правильном порядке tblPr) +
+    автоподбор ширины по содержимому (AutoFit to Contents: tblLayout=autofit, tblW=auto,
+    сняты фиксированные ширины колонок сетки и ячеек)."""
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
-        table._tbl.insert(0, tblPr)
-    layout = tblPr.find(qn("w:tblLayout"))
-    if layout is None:
-        layout = OxmlElement("w:tblLayout")
-        tblPr.append(layout)
-    layout.set(qn("w:type"), "autofit")
-    tblW = tblPr.find(qn("w:tblW"))
-    if tblW is None:
-        tblW = OxmlElement("w:tblW")
-        tblPr.append(tblW)
-    tblW.set(qn("w:w"), "0")
-    tblW.set(qn("w:type"), "auto")
-    tblInd = tblPr.find(qn("w:tblInd"))
-    if tblInd is None:
-        tblInd = OxmlElement("w:tblInd")
-        tblPr.append(tblInd)
-    tblInd.set(qn("w:w"), "0")
-    tblInd.set(qn("w:type"), "dxa")
+        tbl.insert(0, tblPr)
+    _tblpr_set(tblPr, "w:tblW", {"w:w": "0", "w:type": "auto"})
+    _tblpr_set(tblPr, "w:tblInd", {"w:w": "0", "w:type": "dxa"})
+    _tblpr_set(tblPr, "w:tblLayout", {"w:type": "autofit"})
+    grid = tbl.find(qn("w:tblGrid"))
+    if grid is not None:
+        for gc in grid.findall(qn("w:gridCol")):
+            if gc.get(qn("w:w")) is not None:
+                del gc.attrib[qn("w:w")]
+    for row in table.rows:
+        for cell in row.cells:
+            tcPr = cell._tc.find(qn("w:tcPr"))
+            if tcPr is None:
+                continue
+            tcW = tcPr.find(qn("w:tcW"))
+            if tcW is not None:
+                tcW.set(qn("w:type"), "auto")
+                tcW.set(qn("w:w"), "0")
 
 
 def _set_deterministic_metadata(doc):
