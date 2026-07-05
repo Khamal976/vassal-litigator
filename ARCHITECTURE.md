@@ -2,7 +2,7 @@
 
 > Плагин для помощи юристу в ведении судебных дел: от приёма документов клиента до кассационной жалобы.
 
-**Версия архитектуры:** 0.8.0
+**Версия архитектуры:** 0.9.0
 **Дата:** 2026-03-30
 **Ревизия:** 2026-05-31 (B.3 v1 -- полугодовая сверка `legal-review/references/`; B.12 -- новый `appeal/references/permissible-grounds.md`; B.13 -- новый `legal-review/references/production-types.md`; B.14 -- новая директория `build-position/references/` + `key-doctrines.md` по ППВС № 46; B.15 -- новый `legal-review/references/judgment-standards.md` по ППВС № 23 в ред. 09.12.2025). См. также: предыдущая ревизия 2026-05-30 (B.2 -- skill `settlement`, расширение `cassation` под ст. 141 АПК, case-schema v3→v4).
 
@@ -45,6 +45,8 @@ plugins/vassal-litigator/
 │   │   ├── SKILL.md
 │   │   └── references/
 │   │       └── index-schema.md
+│   ├── study-evidence/            ← Исследование фактуры доказательств → досье
+│   │   └── SKILL.md
 │   ├── legal-review/              ← Первичный правовой анализ дела
 │   │   ├── SKILL.md
 │   │   └── references/
@@ -81,12 +83,17 @@ plugins/vassal-litigator/
 │   │       ├── legal-basis.md     ← Нормативная база (АПК гл. 15, ГПК гл. 14.1)
 │   │       ├── case-law.md        ← ППВАС № 50, ППВС № 46, Обзоры ВС РФ
 │   │       └── terms-checklist.md ← Чек-лист условий мирового
+│   ├── build-submission/          ← Сборка нумерованного комплекта на подачу
+│   │   └── SKILL.md
+│   ├── backfill-global/           ← Разовый перенос локальной аналитики в глобальную
+│   │   └── SKILL.md
 │   └── notion-sync/               ← Синхронизация с Notion (Cases + Judges, push)
 │       └── SKILL.md
 ├── commands/
 │   ├── init-case.md               ← Инициализация нового дела
 │   ├── intake.md                  ← /vassal-litigator:intake
 │   ├── catalog.md                 ← /vassal-litigator:catalog
+│   ├── study-evidence.md          ← /vassal-litigator:study-evidence
 │   ├── legal-review.md            ← /vassal-litigator:legal-review
 │   ├── add-evidence.md            ← /vassal-litigator:add-evidence
 │   ├── add-opponent.md            ← /vassal-litigator:add-opponent
@@ -98,6 +105,8 @@ plugins/vassal-litigator/
 │   ├── appeal.md                  ← /vassal-litigator:appeal
 │   ├── cassation.md               ← /vassal-litigator:cassation
 │   ├── settlement.md              ← /vassal-litigator:settlement
+│   ├── build-submission.md        ← /vassal-litigator:build-submission
+│   ├── backfill-global.md         ← /vassal-litigator:backfill-global
 │   └── sync-notion.md             ← /vassal-litigator:sync-notion (опц., требует ~/.vassal/notion-config.yaml)
 ├── shared/
 │   ├── case-schema.yaml            ← JSON Schema для case.yaml
@@ -969,6 +978,18 @@ OCR концептуально отделён от LLM. Сначала прог�
 
 Зеркалит метаданные дела и профиль судьи в Notion-дашборд. Авто-триггеры (мягкая рекомендация) в конце `init-case` / `analyze-hearing` / `appeal` / `cassation` / `add-opponent`. Не источник правды — правда в `.vassal/`.
 
+### 8.17. study-evidence — Исследование доказательств
+
+**Тип:** скилл + команда (`/vassal-litigator:study-evidence`)
+**Модель:** Opus (извлечение фактов + кросс-сверка) + Haiku (vision-транскрипция сканов по `shared/ocr.md`) + Sonnet (определение ядра, сборка досье)
+**Вход:** `case.yaml`, `index.yaml`, md-зеркала и оригиналы ключевых документов
+**Выход:**
+- `.vassal/analysis/evidence-dossier.md` — живое каноническое фактологическое досье (проза по каждому доказательству + сводная сверка по узлам спора + флаги; дельта по `content_hash`, не датируется)
+- `{ГГГГ-ММ-ДД} Досье по доказательствам.md` — датированный снимок для Сюзерена
+**Зависимости:** `shared/ocr.md` (полнотекст сканов); хук-предложение в `legal-review` / `build-position` / `prepare-hearing` (не блокирует)
+
+Аналитический шаг между `intake` и `legal-review` / `build-position`: читает фактуру ключевых доказательств **полнотекстно** (не summary), извлекает факты (даты, суммы, роли, обязательства) **со ссылкой на лист**, кросс-сверяет реквизиты / суммы / хронологию, поднимает «зарытые» факты из глубины больших документов. Даёт нижестоящим скиллам доверенную фактическую опору — закрывает **E.3** (позиции без ссылок на доказательства), вбирает дисциплину достоверности **E.13**. Кредо — факты, не право и не тактика (право — `legal-review`, стратегия — `build-position`). `case.yaml` не пишет (чистый читатель). Кэш по `content_hash`: vision по неизменившимся документам не гоняется.
+
 ---
 
 ## 9. Взаимосвязи скиллов
@@ -1003,11 +1024,13 @@ add-opponent            │
   cassation
 ```
 
-**Критический путь:** init-case → intake → catalog → legal-review → build-position → prepare-hearing
+**Критический путь:** init-case → intake → catalog → study-evidence → legal-review → build-position → prepare-hearing
 
 **Циклические:** add-evidence, add-opponent, update-index, prepare-hearing, analyze-hearing — вызываются многократно по ходу дела.
 
 **Ответвления (примирительный трек):** `settlement` может быть запущен на любой стадии — из `prepare-hearing` (через хук в фазе 2 п.13), из `build-position` (когда анализ позиции даёт «слабо, лучше уступить»), напрямую (когда оппонент прислал проект мирового). Возможные стадии — `1inst / appeal / cassation / enforcement` (ст. 139 АПК). Поток замыкается на `case.status` (settled / withdrawn) или, при обжаловании определения об утверждении мирового, уходит в `cassation` с `target='ruling_settlement'`.
+
+**Аналитический шаг (study-evidence)** -- между `intake` и `legal-review` / `build-position`: собирает фактологическое досье (`.vassal/analysis/evidence-dossier.md`) с фактами со ссылкой на лист, которое нижестоящие скиллы читают вместо поверхностного summary. `legal-review`, `build-position`, `prepare-hearing` при отсутствии досье предлагают его собрать (хук, не блокирует). См. §8.17.
 
 **Глобальная память (кросс-дельная)** -- ортогональный слой, общий для всех дел (см. раздел 15). Основные потоки данных через неё:
 - `analyze-hearing`, `draft-judgment` → `$VASSAL_GLOBAL_DIR/judges/` (двойная запись профиля судьи).
