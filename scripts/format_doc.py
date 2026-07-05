@@ -30,8 +30,9 @@ from datetime import datetime
 
 try:
     from docx import Document
-    from docx.shared import Pt, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_BREAK
+    from docx.shared import Pt, RGBColor, Cm, Mm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_BREAK, WD_TAB_ALIGNMENT
+    from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
 except ImportError:
@@ -195,7 +196,8 @@ class Numbering:
     def available(self):
         return self._ok
 
-    def new_list(self, is_bullet=False):
+    def new_list(self, is_bullet=False, ind_left=720, ind_hanging=360,
+                 num_bold=False, num_size=None):
         self._abs += 1
         self._num += 1
         an = OxmlElement("w:abstractNum")
@@ -219,17 +221,23 @@ class Numbering:
         lvl.append(lvlJc)
         ppr = OxmlElement("w:pPr")
         ind = OxmlElement("w:ind")
-        ind.set(qn("w:left"), "720")     # 36pt = 720 twips
-        ind.set(qn("w:hanging"), "360")  # 18pt = 360 twips
+        ind.set(qn("w:left"), str(ind_left))
+        ind.set(qn("w:hanging"), str(ind_hanging))
         ppr.append(ind)
         lvl.append(ppr)
-        if is_bullet:
-            rpr = OxmlElement("w:rPr")
-            rf = OxmlElement("w:rFonts")
-            rf.set(qn("w:ascii"), FONT)
-            rf.set(qn("w:hAnsi"), FONT)
-            rpr.append(rf)
-            lvl.append(rpr)
+        # rPr номера/маркера: Garamond всегда; bold и размер — по запросу (правка 3)
+        rpr = OxmlElement("w:rPr")
+        rf = OxmlElement("w:rFonts")
+        rf.set(qn("w:ascii"), FONT)
+        rf.set(qn("w:hAnsi"), FONT)
+        rf.set(qn("w:cs"), FONT)
+        rpr.append(rf)
+        if num_bold:
+            rpr.append(OxmlElement("w:b"))
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), str(int((num_size or SZ_BODY) * 2)))
+        rpr.append(sz)
+        lvl.append(rpr)
         an.append(lvl)
         # все w:abstractNum должны идти ДО всех w:num
         first_num = self._numbering.find(qn("w:num"))
@@ -406,10 +414,10 @@ def _looks_like_source(s):
 # --------------------------------------------------------------------------- #
 # Рендер модели -> .docx
 # --------------------------------------------------------------------------- #
-def _add_header_para(doc, lines):
-    """Один абзац шапки из списка строк (внутри — soft return); leftIndent 210, spaceAfter 0."""
+def _add_header_para(doc, lines, space_after=0):
+    """Один абзац шапки из списка строк (внутри — soft return); leftIndent 210."""
     p = doc.add_paragraph()
-    _para(p, before=0, after=0, left_indent=HEADER_LEFT_INDENT)
+    _para(p, before=0, after=space_after, left_indent=HEADER_LEFT_INDENT)
     for k, part in enumerate(lines):
         if k:
             p.add_run().add_break(WD_BREAK.LINE)
@@ -446,12 +454,20 @@ def render(header_lines, blocks, out_path, case=None):
     normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
     normal.paragraph_format.line_spacing = LINE_MULT
 
+    # страница A4 + поля (рос. практика; левое шире под подшивку) + автоперенос (правка 1)
+    sec = doc.sections[0]
+    sec.page_height, sec.page_width = Mm(297), Mm(210)
+    sec.left_margin, sec.right_margin = Cm(3), Cm(1.5)
+    sec.top_margin, sec.bottom_margin = Cm(2), Cm(2)
+    _enable_hyphenation(doc)
+
     numbering = Numbering(doc)
     _H2_STATE["num_id"] = None   # сброс сквозной нумерации доводов на каждый рендер
 
-    # --- шапка ---
+    # --- шапка (правка 2: интервал после «Дело №…» перед «от …») ---
     for group in _group_header(header_lines):
-        _add_header_para(doc, group)
+        sa = 8 if group and group[0].strip().startswith("Дело") else 0
+        _add_header_para(doc, group, space_after=sa)
 
     for idx, b in enumerate(blocks):
         t = b["type"]
@@ -514,15 +530,15 @@ def render(header_lines, blocks, out_path, case=None):
 
         elif t == "quote":
             p = doc.add_paragraph()
-            _para(p, before=0, after=8, left_indent=QUOTE_INDENT)
+            _para(p, before=0, after=0, left_indent=QUOTE_INDENT)  # правка 7: блок без интервала снизу
             _para_border(p, ["left"])
             r = p.add_run(b["text"])
             _set_font(r, SZ_BODY)
 
         elif t == "source":
             p = doc.add_paragraph()
-            _para(p, before=0, after=8, align=WD_ALIGN_PARAGRAPH.RIGHT,
-                  left_indent=QUOTE_INDENT)
+            _para(p, before=0, after=0, align=WD_ALIGN_PARAGRAPH.RIGHT,
+                  left_indent=QUOTE_INDENT)  # правка 7: интервал даст следующий текст (spaceBefore)
             _para_border(p, ["left"])
             r = p.add_run(b["text"])
             _set_font(r, SZ_BODY)
@@ -538,11 +554,15 @@ def render(header_lines, blocks, out_path, case=None):
 
         elif t == "signature":
             p = doc.add_paragraph()
-            _para(p, before=12, after=0)
+            _para(p, before=24, after=0)   # больше воздуха сверху под подпись
+            # правка 8: ФИО к правому краю, широкий зазор между ролью и ФИО под подпись
+            content_w = sec.page_width - sec.left_margin - sec.right_margin
+            p.paragraph_format.tab_stops.add_tab_stop(content_w, WD_TAB_ALIGNMENT.RIGHT)
             r = p.add_run(b["role"] + ("\t" + b["name"] if b["name"] else ""))
             _set_font(r, SZ_BODY, bold=True)
 
     _fix_after_table_spacing(doc)
+    _fix_after_citation_spacing(doc)
     _set_deterministic_metadata(doc)
     doc.save(out_path)
 
@@ -555,7 +575,10 @@ def _apply_h2_number(doc, p, numbering):
     if not numbering.available():
         return
     if _H2_STATE["num_id"] is None:
-        _H2_STATE["num_id"] = numbering.new_list(is_bullet=False)
+        # правки 3, 4: номер довода жирный 14pt и у левого поля (не индентирован)
+        _H2_STATE["num_id"] = numbering.new_list(
+            is_bullet=False, ind_left=397, ind_hanging=397,
+            num_bold=True, num_size=SZ_H2)
     Numbering.apply(p, _H2_STATE["num_id"])
 
 
@@ -590,6 +613,9 @@ def _emit_table(doc, rows):
         table.style = "Table Grid"
     except KeyError:
         pass
+    table.alignment = WD_TABLE_ALIGNMENT.LEFT   # правка 5: на одном уровне с текстом
+    table.autofit = True
+    _table_autofit_layout(table)                # правка 6: автоподбор ширины по содержимому
     for ri, row in enumerate(rows):
         is_header = (ri == 0)
         is_total = _is_total_row(row)
@@ -694,6 +720,58 @@ def _fix_after_table_spacing(doc):
                 spacing.set(qn("w:before"), "320")   # 16pt = 320 twips
                 spacing.set(qn("w:line"), "276")      # 1.15*240
                 spacing.set(qn("w:lineRule"), "auto")
+
+
+def _fix_after_citation_spacing(doc):
+    """Правка 7: после цитатного блока (абзацы с левой границей) — интервал сверху
+    у следующего обычного текста; сам блок цитаты — без интервала снизу."""
+    def has_left_border(p):
+        pPr = p._p.find(qn("w:pPr"))
+        if pPr is None:
+            return False
+        pbdr = pPr.find(qn("w:pBdr"))
+        return pbdr is not None and pbdr.find(qn("w:left")) is not None
+    paras = doc.paragraphs
+    for i in range(len(paras) - 1):
+        if has_left_border(paras[i]) and not has_left_border(paras[i + 1]):
+            pf = paras[i + 1].paragraph_format
+            sb = pf.space_before
+            if sb is None or sb < Pt(16):
+                pf.space_before = Pt(16)
+
+
+def _enable_hyphenation(doc):
+    """Правка 1: автоматический перенос слов на уровне документа."""
+    settings = doc.settings.element
+    if settings.find(qn("w:autoHyphenation")) is None:
+        el = OxmlElement("w:autoHyphenation")
+        el.set(qn("w:val"), "true")
+        settings.insert(0, el)
+
+
+def _table_autofit_layout(table):
+    """Правки 5, 6: таблица без левого отступа + автоподбор ширины по содержимому."""
+    tblPr = table._tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        table._tbl.insert(0, tblPr)
+    layout = tblPr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tblPr.append(layout)
+    layout.set(qn("w:type"), "autofit")
+    tblW = tblPr.find(qn("w:tblW"))
+    if tblW is None:
+        tblW = OxmlElement("w:tblW")
+        tblPr.append(tblW)
+    tblW.set(qn("w:w"), "0")
+    tblW.set(qn("w:type"), "auto")
+    tblInd = tblPr.find(qn("w:tblInd"))
+    if tblInd is None:
+        tblInd = OxmlElement("w:tblInd")
+        tblPr.append(tblInd)
+    tblInd.set(qn("w:w"), "0")
+    tblInd.set(qn("w:type"), "dxa")
 
 
 def _set_deterministic_metadata(doc):
