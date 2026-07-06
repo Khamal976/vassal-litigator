@@ -126,6 +126,75 @@ def _classify_page(page) -> str:
     return "text"
 
 
+# --- Детект составного пакета (E.6.2) ---------------------------------------
+
+# Заголовки-якоря, которые в норме СТОЯТ В ШАПКЕ самостоятельного документа
+# (не встречаются как обычное слово в теле). Повтор одного якоря в шапке ≥2 страниц —
+# сигнал, что в одном PDF склеены несколько документов одного типа (напр. 2 платёжки).
+# Матчинг — по нормализованной (ё→е, нижний регистр, схлопнутые пробелы) шапке страницы.
+_COMPOSITE_HEADER_ANCHORS = [
+    "платежное поручение",
+    "счет-фактура",
+    "счет на оплату",
+    "универсальный передаточный документ",
+    "товарная накладная",
+    "товарно-транспортная накладная",
+    "приходный кассовый ордер",
+    "расходный кассовый ордер",
+]
+# Судебные акты: якорь засчитывается ТОЛЬКО вместе с «арбитражный суд» в шапке —
+# иначе «определение/решение» ловится в теле («суд вынес определение …»).
+_COMPOSITE_COURT_ANCHORS = ["определение", "решение", "постановление"]
+
+_COMPOSITE_HEAD_CHARS = 300          # «шапка» страницы — первые N символов
+_INN_RE = re.compile(r"\b\d{10}\b|\b\d{12}\b")
+
+
+def _norm_head(text: str) -> str:
+    """Нормализованная шапка страницы для матчинга якорей."""
+    head = (text or "")[:_COMPOSITE_HEAD_CHARS].lower().replace("ё", "е")
+    return re.sub(r"\s+", " ", head)
+
+
+def _detect_composite(text_parts, statuses) -> dict:
+    """Эвристика склейки нескольких самостоятельных документов в одном PDF (E.6.2).
+
+    Консервативно, чтобы НЕ гнать иск-с-приложениями (у него один заголовок, а
+    приложения — с разными шапками): триггер — один заголовок-якорь в шапке ≥2
+    РАЗНЫХ страниц. Множественные ИНН — только вспомогательная пометка при уже
+    сработавшем триггере. Решение о split — агентское (в preview), здесь директива.
+    Скан/мусор-страницы пропускаем: их текста ещё нет (vision отработает позже).
+    """
+    anchor_pages = {}   # ярлык якоря -> множество индексов страниц
+    for i, (part, status) in enumerate(zip(text_parts, statuses)):
+        if status != "text":
+            continue
+        head = _norm_head(part)
+        for anchor in _COMPOSITE_HEADER_ANCHORS:
+            if anchor in head:
+                anchor_pages.setdefault(anchor, set()).add(i)
+        if "арбитражный суд" in head:
+            for anchor in _COMPOSITE_COURT_ANCHORS:
+                if anchor in head:
+                    anchor_pages.setdefault(anchor, set()).add(i)
+
+    reasons = []
+    for anchor, pages in sorted(anchor_pages.items()):
+        if len(pages) >= 2:
+            nums = ", ".join(str(p + 1) for p in sorted(pages))
+            reasons.append(f"заголовок «{anchor}» — в шапке {len(pages)} стр. ({nums})")
+
+    if reasons:
+        inns = set()
+        for part, status in zip(text_parts, statuses):
+            if status == "text":
+                inns.update(_INN_RE.findall(part or ""))
+        if len(inns) >= 2:
+            reasons.append(f"различных ИНН в документе: {len(inns)}")
+
+    return {"composite_suspected": bool(reasons), "composite_reasons": reasons}
+
+
 # --- Извлечение из PDF ------------------------------------------------------
 
 def extract_pdf(filepath: str,
@@ -200,6 +269,10 @@ def extract_pdf(filepath: str,
         confidence = "pending-vision"
         method = "pdf-text+vision" if any(s == "text" for s in statuses) else "vision"
 
+    # детект склейки нескольких документов в одном PDF (E.6.2)
+    composite = _detect_composite(text_parts, statuses) if pages > 1 else {
+        "composite_suspected": False, "composite_reasons": []}
+
     warnings = []
     if has_garbage:
         warnings.append("Обнаружен мусорный текстовый слой — страницы отправлены на vision (F3.3)")
@@ -207,6 +280,11 @@ def extract_pdf(filepath: str,
         warnings.append(
             f"Длинный скан ({pages} стр.) — рекомендован структурный режим (F3.4): "
             f"полнотекст головы (первые {max_head_pages}) + подписной, остальное — скелет")
+    if composite["composite_suspected"]:
+        warnings.append(
+            "Похоже на составной пакет (несколько документов в одном PDF, E.6.2): "
+            + "; ".join(composite["composite_reasons"])
+            + " — предложить split в preview")
 
     return {
         "text": full_text,
@@ -219,6 +297,8 @@ def extract_pdf(filepath: str,
         "vision_pages_suggested": suggested,
         "vision_reason": vision_reason,
         "structural_recommended": structural_recommended,
+        "composite_suspected": composite["composite_suspected"],
+        "composite_reasons": composite["composite_reasons"],
         "warnings": warnings,
     }
 
@@ -410,6 +490,8 @@ def extract(filepath: str,
     result.setdefault("vision_pages_suggested", result.get("vision_pages", []))
     result.setdefault("vision_reason", None)
     result.setdefault("structural_recommended", False)
+    result.setdefault("composite_suspected", False)   # E.6.2 — только PDF взводит
+    result.setdefault("composite_reasons", [])
     result.setdefault("low_confidence_fields", [])   # заполняется vision-ногой агента
     return result
 
