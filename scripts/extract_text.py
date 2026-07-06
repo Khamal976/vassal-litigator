@@ -36,6 +36,7 @@ import sys
 import json
 import os
 import re
+import errno
 import hashlib
 import subprocess
 from pathlib import Path
@@ -195,6 +196,69 @@ def _detect_composite(text_parts, statuses) -> dict:
     return {"composite_suspected": bool(reasons), "composite_reasons": reasons}
 
 
+# --- Классификация сбоя открытия файла (E.14 а/б) ---------------------------
+
+# Маркеры реальной порчи PDF в тексте исключения pymupdf/mupdf.
+_CORRUPT_MARKERS = (
+    "format error", "cannot open broken", "broken document", "no objects found",
+    "syntax error", "damaged", "not a pdf", "cannot recognize", "bad xref",
+)
+# errno, характерные для НЕ материализованного файла на облачном маунте (OneDrive).
+_MATERIALIZE_ERRNOS = {errno.ENOENT, errno.EIO, errno.ESTALE, errno.EACCES, errno.EAGAIN}
+# Текстовые маркеры того же (когда errno недоступен — pymupdf оборачивает по-своему).
+_MATERIALIZE_MSG_MARKERS = (
+    "no such file", "cannot find", "not materialized", "input/output error", "stale file",
+)
+
+
+def classify_open_error(filepath: str, exc: Exception) -> tuple:
+    """Различает 'файл не материализован (OneDrive/маунт)' vs 'реально битый' (E.14 а/б).
+
+    Возвращает (error_class, retryable, message):
+      - not_materialized / retryable=True  — файл-заглушка не синкнут; ретрай с паузой (rule 2).
+      - corrupt          / retryable=False — данные PDF повреждены; ветка «битый файл».
+      - empty            / retryable=False — файл нулевого размера.
+    Порядок проверок: пусто → не материализован → битый → (по умолчанию) битый.
+    """
+    exc_name = type(exc).__name__
+    msg = str(exc).lower()
+
+    # 0-байтовый файл (в т.ч. pymupdf EmptyFileError) — не битый и не «дождись синка».
+    try:
+        if os.path.getsize(filepath) == 0:
+            return ("empty", False, "файл нулевого размера")
+    except OSError:
+        pass  # getsize сам упал → отнесём к not_materialized ниже
+    if exc_name == "EmptyFileError":
+        return ("empty", False, "файл нулевого размера")
+
+    # I/O-ошибки и отсутствие файла на маунте → вероятная дегидратация OneDrive → ретрай.
+    oserrno = getattr(exc, "errno", None)
+    if (isinstance(exc, FileNotFoundError) or oserrno in _MATERIALIZE_ERRNOS
+            or any(m in msg for m in _MATERIALIZE_MSG_MARKERS)):
+        return ("not_materialized", True,
+                "файл не открылся на маунте — возможно, не синхронизирован OneDrive "
+                "(cloud-only): сначала Read (материализует), затем ретрай с паузой")
+
+    # Явные маркеры порчи PDF (pymupdf FileDataError и т.п.) → реально битый.
+    if exc_name == "FileDataError" or any(m in msg for m in _CORRUPT_MARKERS):
+        return ("corrupt", False, f"PDF повреждён, не открывается: {exc}")
+
+    # Неизвестная ошибка на существующем ненулевом файле — считаем битым (не ретраить бесконечно).
+    return ("corrupt", False, f"PDF не открывается: {exc}")
+
+
+def _pdf_error(error_class: str, retryable: bool, message: str, pages: int = 0) -> dict:
+    """Единый JSON-отказ PDF-извлечения с классификацией сбоя (E.14)."""
+    return {"text": "", "method": "none", "confidence": "low", "pages": pages,
+            "page_statuses": [], "needs_vision": False, "vision_pages": [],
+            "vision_pages_suggested": [], "vision_reason": None,
+            "structural_recommended": False,
+            "composite_suspected": False, "composite_reasons": [],
+            "error_class": error_class, "retryable": retryable,
+            "warnings": [message]}
+
+
 # --- Извлечение из PDF ------------------------------------------------------
 
 def extract_pdf(filepath: str,
@@ -216,23 +280,29 @@ def extract_pdf(filepath: str,
     try:
         doc = fitz.open(filepath)
     except Exception as e:
-        return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-                "needs_vision": False, "vision_pages": [], "vision_reason": None,
-                "structural_recommended": False,
-                "warnings": [f"PDF не открывается: {e}"]}
+        # E.14 а/б: различаем «не материализован (OneDrive) → ретрай» и «реально битый → ветка битого».
+        ec, rt, msg = classify_open_error(filepath, e)
+        return _pdf_error(ec, rt, msg)
 
     pages = len(doc)
     statuses = []
     text_parts = []      # текст для 'text'-страниц; плейсхолдер для остальных
-    for i, page in enumerate(doc):
-        status = _classify_page(page)
-        statuses.append(status)
-        if status == "text":
-            text_parts.append(page.get_text())
-        elif status == "blank":
-            text_parts.append("")
-        else:  # scan / garbage — отдаётся vision
-            text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
+    try:
+        for i, page in enumerate(doc):
+            status = _classify_page(page)
+            statuses.append(status)
+            if status == "text":
+                text_parts.append(page.get_text())
+            elif status == "blank":
+                text_parts.append("")
+            else:  # scan / garbage — отдаётся vision
+                text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
+    except Exception as e:
+        # Файл «открылся, но развалился» при чтении страниц — как правило дегидратация
+        # cloud-only на маунте (E.14а): не падаем трейсбеком, а классифицируем.
+        doc.close()
+        ec, rt, msg = classify_open_error(filepath, e)
+        return _pdf_error(ec, rt, msg, pages)
     doc.close()
 
     # страницы под vision (1-based для человека/агента)
@@ -417,7 +487,10 @@ def render_page_to_png(filepath: str, page_index0: int, render_dir: str,
         return {"path": out, "width": pix.width, "height": pix.height,
                 "cropped": cropped, "warnings": warnings}
     except Exception as e:
-        return {"path": None, "cropped": False, "warnings": [f"Рендер не удался: {e}"]}
+        # E.14а: тот же разбор — не материализован (ретрай) vs битый.
+        ec, rt, msg = classify_open_error(filepath, e)
+        return {"path": None, "cropped": False, "error_class": ec, "retryable": rt,
+                "warnings": [f"Рендер не удался: {msg}"]}
 
 
 # --- Tesseract спот-сверка одного поля (F3.1, опционально, вариант B) --------
@@ -493,6 +566,8 @@ def extract(filepath: str,
     result.setdefault("composite_suspected", False)   # E.6.2 — только PDF взводит
     result.setdefault("composite_reasons", [])
     result.setdefault("low_confidence_fields", [])   # заполняется vision-ногой агента
+    result.setdefault("error_class", None)           # E.14 — not_materialized|corrupt|empty (иначе None)
+    result.setdefault("retryable", False)            # E.14 — True → ретрай с паузой (не «битый»)
     return result
 
 
@@ -548,8 +623,17 @@ def main():
     # Режим 1: извлечение
     filepath = argv[0]
     if not os.path.exists(filepath):
-        print(json.dumps({"error": f"Файл не найден: {filepath}"}, ensure_ascii=False))
-        sys.exit(1)
+        # E.14а: на облачном маунте отсутствие enumerated-файла — почти всегда дегидратация
+        # (скилл приёма передаёт реально перечисленные файлы), а не «нет такого файла».
+        # Отдаём структурный JSON с retryable, чтобы скилл сделал ретрай с паузой, а не «битый».
+        print(json.dumps({
+            "text": "", "method": "none", "confidence": "low", "pages": 0,
+            "needs_vision": False, "content_hash": "",
+            "error_class": "not_materialized", "retryable": True,
+            "warnings": [f"Файл не найден на маунте: {filepath} — возможно, не синхронизирован "
+                         f"OneDrive (cloud-only); сначала Read (материализует), затем ретрай с паузой"],
+        }, ensure_ascii=False, indent=2))
+        return
 
     max_head = int(_get_opt(argv, "--max-head-pages", str(DEFAULT_MAX_HEAD_PAGES)))
     threshold = int(_get_opt(argv, "--structural-threshold", str(DEFAULT_STRUCTURAL_THRESHOLD)))
