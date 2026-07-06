@@ -2,7 +2,7 @@
 
 > Плагин для помощи юристу в ведении судебных дел: от приёма документов клиента до кассационной жалобы.
 
-**Версия архитектуры:** 0.18.0
+**Версия архитектуры:** 0.19.0
 **Дата:** 2026-03-30
 **Ревизия:** 2026-05-31 (B.3 v1 -- полугодовая сверка `legal-review/references/`; B.12 -- новый `appeal/references/permissible-grounds.md`; B.13 -- новый `legal-review/references/production-types.md`; B.14 -- новая директория `build-position/references/` + `key-doctrines.md` по ППВС № 46; B.15 -- новый `legal-review/references/judgment-standards.md` по ППВС № 23 в ред. 09.12.2025). См. также: предыдущая ревизия 2026-05-30 (B.2 -- skill `settlement`, расширение `cassation` под ст. 141 АПК, case-schema v3→v4).
 
@@ -616,6 +616,8 @@ OCR концептуально отделён от LLM. Сначала прог�
 - Аналитические блоки для агента: `.vassal/analysis/{qualification.md, deadlines.md, pretrial.md, jurisdiction.md, completeness.md, questions-to-client.md}`
 
 **Зависимости:** `catalog` (полный индекс с саммари)
+
+**Выходы/ветки (E.15):** оценку перспектив/рисков `legal-review` **не даёт** — при запросе «оцени перспективы» неблокирующий офер `build-position` (граница чистая; фантомный `risks-preliminary.md` без блока-производителя упразднён). Банкротство без даты публикации → `registry_close_date: null` + `registry_close_basis` с объяснением + критичный запрос клиенту (P0 нерассчитываем — валидный исход, анализ не блокируется).
 
 **Алгоритм:**
 1. Прочитать `case.yaml`, `index.yaml`.
