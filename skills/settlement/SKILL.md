@@ -381,6 +381,7 @@ Settlement -- ортогонален обычному состязательно
     - `settlement-{дата}-opponent-forecast.md` -- прогноз оппонента из п.13.
     - `settlement-{дата}-risks.md` -- три стресс-теста из фазы 3.
     - `settlement-{дата}-terms-draft.md` -- финальный проект условий (для `agreement` -- условия мирового; для `withdrawal` / `admission` -- ключевые формулировки заявления).
+    - `settlement-{дата}-appendices.md` -- **рабочий перечень приложений** к подаваемому документу(ам), по одному пункту на строку `- NN. Наименование от ДД.ММ.ГГГГ [doc-NNN]` (машинно-читаемо для `build-submission`, E.4.2). При `mode='agreement'` -- приложения ходатайства об утверждении мирового; для `withdrawal`/`admission` -- приложения заявления. Подаваемые документы tag-free, поэтому теги живут здесь. Нет в индексе -- `[doc-НЕ-В-ИНДЕКСЕ]`.
 
     Каждый файл -- со стандартным frontmatter (см. [shared/conventions.md](../../shared/conventions.md) → «Двухуровневое сохранение для аналитических скиллов»): `type`, `section`, `date`, `case`, `related_summary`, `supersedes`, `refs`, `not_applicable`.
 
@@ -433,7 +434,7 @@ Settlement -- ортогонален обычному состязательно
     - Для `mode='admission'`: `{ГГГГ-ММ-ДД} Заявление о признании иска.md` -- `.docx` на `build-submission` через `format-doc --type заявление`.
     Сообщи Сюзерену: документы готовы в `.md`; `.docx` для подачи напечатается на `/vassal-litigator:build-submission` (мировое соглашение -- оформить вручную как двусторонний).
 
-35. **Сохранить машинно-читаемые секции** в `.vassal/analysis/settlement-{ГГГГ-ММ-ДД}-{batna, zone-of-agreement, opponent-forecast, risks, terms-draft}.md` -- с frontmatter по правилу двухуровневого сохранения.
+35. **Сохранить машинно-читаемые секции** в `.vassal/analysis/settlement-{ГГГГ-ММ-ДД}-{batna, zone-of-agreement, opponent-forecast, risks, terms-draft, appendices}.md` -- с frontmatter по правилу двухуровневого сохранения. `appendices` -- рабочий перечень приложений с `[doc-NNN]` для `build-submission` (E.4.2).
 
 36. **Обновить `case.yaml`** (только зоны своего ownership, см. [shared/conventions.md](../../shared/conventions.md) → «Ownership полей case.yaml»; набор полей -- по варианту фазы 0):
     - **Драфт** (вариант (а)/(б)): `case.settlement.{mode, initiator, stage, draft_date}`, `in_progress: true`; `case.status → pending_settlement` (для `agreement`/`withdrawal`, если до подачи); для `mode='admission'` статус не меняем.
@@ -496,7 +497,7 @@ Settlement -- ортогонален обычному состязательно
 
 **По категории 2 (аналитическое):**
 - Сводный `.md` в корне дела создан по шаблону для текущего `mode`.
-- Машинно-читаемые секции `settlement-{дата}-{batna, zone-of-agreement, opponent-forecast, risks, terms-draft}.md` созданы в `.vassal/analysis/`. Каждый файл имеет валидный frontmatter (`type: settlement-section`, `section`, `date`, `case`, `related_summary`, `supersedes`, `refs`, `not_applicable`). Если секция неприменима -- `not_applicable: <причина>` + одна строка тела.
+- Машинно-читаемые секции `settlement-{дата}-{batna, zone-of-agreement, opponent-forecast, risks, terms-draft, appendices}.md` созданы в `.vassal/analysis/`. Каждый файл имеет валидный frontmatter (`type: settlement-section`, `section`, `date`, `case`, `related_summary`, `supersedes`, `refs`, `not_applicable`). Если секция неприменима -- `not_applicable: <причина>` + одна строка тела.
 - Сводный и машинно-читаемые согласованы между собой; источники -- двойные ссылки.
 - Все выводы оформлены по аудит-формату.
 - При повторном запуске -- `supersedes`-цепочка корректна; старые файлы не удалены.
@@ -504,7 +505,7 @@ Settlement -- ортогонален обычному состязательно
 **По категории 3 (document-producing):**
 - Все необходимые **подаваемые `.md`** созданы в корне дела по шаблону текущего `mode` (tag-free, по якорному контракту `format-doc`). Для `mode='agreement'` -- **два отдельных** `.md`: текст мирового (двусторонний, ст. 140 АПК -- вне охвата `format-doc`) и ходатайство об утверждении.
 - `.docx` **здесь не создаётся** (late-binding): печатается на `build-submission` через `format-doc` (`--type ходатайство/заявление`); мировое -- вручную как двусторонний. Сюзерену выведено сообщение о готовности `.md`.
-- Приложения к каждому документу перечислены **в самом документе** + связаны с записями `index.yaml` через двойные ссылки.
+- Приложения к каждому документу перечислены **в самом документе** (tag-free); тот же перечень с `[doc-NNN]` -- в `settlement-{дата}-appendices.md`, откуда `build-submission` резолвит приложения в файлы (E.4.2).
 
 **По case.yaml:**
 - `case.settlement.{mode, initiator, stage, draft_date, in_progress=true}` обновлены.

@@ -541,6 +541,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 - Сводные аналитические файлы для Сюзерена (`Предварительный анализ документов.md`, позиции).
 - Файлы в `.vassal/analysis/*.md`.
 - Колонка `ID` в `Таблица документов.xlsx` (от `catalog`).
+- **Рабочий перечень приложений** в prep/analysis-артефактах генераторов (`prepare-hearing` §6 prep, `cassation` §7 `cassation-prep`, `appeal` `appeal-prep`, `settlement` `settlement-*-appendices`): каждый пункт — `- NN. Наименование от ДД.ММ.ГГГГ [doc-NNN]`. По нему `build-submission` точно резолвит приложение в файл (E.4.2); нет тега — уход на эвристику с флагом. В **подаваемом** документе перечень остаётся tag-free (см. «Где не нужно»).
 
 **Где не нужно:**
 - Имена файлов на ФС (там и так есть имя документа, doc-id хранится в индексе).
@@ -617,6 +618,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 | `python-docx` (Python, ставит `scripts/setup.sh`) | `format-doc` (нога `scripts/format_doc.py`); хосты печати — `prepare-hearing` и `build-submission` | **Основной путь.** In-plugin headless-рендер `.docx` процессуальных документов по фирменной типографике (порт `proc-doc-style`) — санкционированный путь `.docx` в Cowork, без `arbitrum-docx`/Word-аддина. См. [skills/format-doc/SKILL.md](../skills/format-doc/SKILL.md) |
 | `arbitrum-docx` (внешний плагин, **опционально**) | (опц.) `prepare-hearing`, `build-submission`; документы вне охвата `format-doc` (`settlement`/мировое соглашение, `draft-judgment`/проект решения, `analyze-hearing`/отчёт клиенту) | **Опциональная альтернатива** оформления `.docx`. Основной путь — `format-doc` (выше). В Cowork `arbitrum-docx` недоступен → используется `format-doc`; при отсутствии обоих движков — `.md`-fallback |
 | `xlsx`-скилл / `openpyxl` | `catalog` | Генерация `Таблица документов.xlsx` |
+| `libreoffice` / `soffice` (системный, **опционально**, требует root — в Cowork обычно нет, как `tesseract`) | (опц.) `build-submission` | **Опционально.** (1) нормализация офисных приложений (RTF/XLSX/DOC/ODT) в PDF для «Мой арбитр» (E.4.4); (2) подсчёт листов свеже-напечатанного `.docx` слота `00` (`soffice --headless --convert-to pdf` → число страниц через `pymupdf`, E.4.5). Недоступен → копировать как есть + флаг / листаж «уточнить вручную» (не тихо) |
 | `tesseract` + вендоренный `rus.traineddata` (`scripts/tessdata/`, опционально) | OCR-модуль `shared/ocr` | **Опциональная** спот-сверка одного критичного поля (ИНН/сумма/дата). Основной путь OCR — **vision**, см. [shared/ocr.md](ocr.md) |
 | `pymupdf`, `python-docx` (Python) | `scripts/extract_text.py` | Извлечение текста из PDF/DOCX + рендер страниц в PNG для vision (OCR-модуль `shared/ocr`) |
 | Notion MCP (`notion-search`, `notion-create-pages`, `notion-update-page`, `notion-create-database`, `notion-update-data-source`) | `notion-sync` | Push метаданных дела, профиля судьи и (опционально, этап 6.2b) профилей оппонентов в Notion-базы Cases / Judges / Counterparties (опционально, см. раздел «Notion-слой») |
@@ -700,7 +702,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 2. **Классификация рассинхрона:**
    - `new_files`: файлы на диске без записи в `index.yaml`.
-   - `orphan_records`: записи `index.yaml` без файла на диске.
+   - `orphan_records`: записи `index.yaml` без файла на диске, **кроме записей, чей `file:` лежит под игнор-папкой** (`На подачу/`, `На удаление/`, `Входящие документы/`, `.vassal/` -- см. шаг 1). Их файлы не попадают в `files_on_disk` by-design (папка проигнорирована при скане), поэтому осиротевшими они **не** считаются -- иначе ложный орфан «указывает в „На подачу/“» при живом файле (находка E.4).
    - (Устаревшие зеркала отдельно не проверяются здесь -- это работа `update-index`.)
 
 3. **Решение:**

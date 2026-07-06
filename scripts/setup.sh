@@ -33,6 +33,18 @@ if ! command -v ocrmypdf &> /dev/null; then
     pip install --break-system-packages -q ocrmypdf 2>/dev/null || true
 fi
 
+# 2b. LibreOffice (soffice) — ОПЦИОНАЛЬНО, best-effort. Требует root (в Cowork обычно нет).
+#     Использует build-submission: (1) офисные приложения RTF/XLSX/DOC/ODT → PDF для «Мой арбитр»;
+#     (2) подсчёт листов свеже-напечатанного .docx (E.4.4/E.4.5). Недоступен — не критично:
+#     копия «как есть» + флаг / листаж «уточнить вручную» (см. shared/conventions.md).
+if command -v soffice &> /dev/null || command -v libreoffice &> /dev/null; then
+    echo "✓ libreoffice (soffice) уже установлен"
+else
+    echo "→ Пробую libreoffice (best-effort; требует root)..."
+    { sudo apt-get install -y -qq libreoffice-core libreoffice-writer libreoffice-calc ; } 2>/dev/null \
+        || echo "ℹ️  libreoffice недоступен (нет root). build-submission: PDF-нормализация приложений и листаж .docx пропускаются с флагом — не критично."
+fi
+
 # 3. Статус.
 echo ""
 echo "=== Статус зависимостей ==="
@@ -45,6 +57,7 @@ check_py docx
 check_py openpyxl
 check_cmd tesseract
 check_cmd ocrmypdf
+check_cmd soffice
 
 echo ""
 echo "=== Готово. Если tesseract недоступен — это ок: основной OCR-путь — vision. ==="
