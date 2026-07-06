@@ -29,6 +29,7 @@
 | Ведение дела | `add-evidence` | Приём доп. доказательств от клиента |
 | | `add-opponent` | Приём и анализ документов оппонента |
 | | `prepare-hearing` | Подготовка к заседанию |
+| | `argument-map` | Карта доводов сторон — таблица по узлам спора (2 версии: чистая для суда + рабочая) |
 | | `analyze-hearing` | Анализ транскрипции заседания |
 | | `settlement` | Примирение: мировое / отказ / признание иска |
 | Обжалование | `draft-judgment` | Проект судебного решения |
@@ -88,8 +89,8 @@ chmod +x scripts/setup.sh
 vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
-├── commands/                 # Slash-команды (20)
-├── skills/                   # Скиллы (20)
+├── commands/                 # Slash-команды (21)
+├── skills/                   # Скиллы (21)
 │   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
@@ -102,6 +103,7 @@ vassal-litigator/
 │   ├── add-evidence/
 │   ├── add-opponent/
 │   ├── prepare-hearing/
+│   ├── argument-map/
 │   ├── analyze-hearing/
 │   ├── settlement/
 │   ├── draft-judgment/

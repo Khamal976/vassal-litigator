@@ -230,7 +230,7 @@ discrepancies_count: {D}
 
 ## Хук в нижестоящих скиллах
 
-`legal-review`, `build-position`, `prepare-hearing` в фазе загрузки контекста проверяют наличие `.vassal/analysis/evidence-dossier.md`. Если досье нет — **не блокируя**, предлагают:
+`legal-review`, `build-position`, `prepare-hearing`, `argument-map` в фазе загрузки контекста проверяют наличие `.vassal/analysis/evidence-dossier.md`. Если досье нет — **не блокируя**, предлагают:
 ```
 Фактологическое досье не собрано. Рекомендую запустить study-evidence —
 он читает доказательства полнотекстно и даёт фактуру со ссылками на лист

@@ -16,8 +16,11 @@ format_doc.py — детерминированная нога рендера п�
     vozrazhenie | poyasneniya |
     zamechaniya-na-protokol                -> «иск-документ» (ПРОШУ внизу, один список)
     pretenziya                             -> «претензия» (адресат — контрагент)
+    карта-доводов | argument-map           -> «карта-доводов» (аналитическая таблица, АЛЬБОМНАЯ)
 Русские названия («жалоба», «отзыв», «претензия», «замечания-на-протокол» …) тоже принимаются.
 Структуру задаёт сам .md (позиция «ПРОШУ:»); --type влияет на сборку шапки и лог.
+Тип «карта-доводов» дополнительно включает альбомную ориентацию (широкая таблица E.11) —
+единственный тип, влияющий на страницу; процессуальные документы остаются портретными.
 
 ⚠️ СТАТУС: v1, требует валидации на реальном .md в Cowork (python-docx локально
 недоступен). Узлы наибольшего риска (см. style-spec §8): OOXML-нумерация с рестартом
@@ -35,6 +38,7 @@ try:
     from docx.shared import Pt, RGBColor, Cm, Mm
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_BREAK, WD_TAB_ALIGNMENT
     from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.enum.section import WD_ORIENT
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
 except ImportError:
@@ -101,6 +105,8 @@ TYPE_MAP = {
     "zamechaniya-na-protokol": "иск-документ", "замечания-на-протокол": "иск-документ",
     "замечания": "иск-документ",
     "pretenziya": "претензия", "претензия": "претензия",
+    "карта-доводов": "карта-доводов", "argument-map": "карта-доводов",
+    "карта доводов": "карта-доводов", "карта_доводов": "карта-доводов",
 }
 
 
@@ -449,7 +455,7 @@ def _group_header(header_lines):
     return groups
 
 
-def render(header_lines, blocks, out_path, case=None):
+def render(header_lines, blocks, out_path, case=None, doc_type=None):
     doc = Document()
     # базовый стиль Normal
     normal = doc.styles["Normal"]
@@ -463,6 +469,12 @@ def render(header_lines, blocks, out_path, case=None):
     sec.page_height, sec.page_width = Mm(297), Mm(210)
     sec.left_margin, sec.right_margin = Cm(3), Cm(1.5)
     sec.top_margin, sec.bottom_margin = Cm(2), Cm(2)
+    # E.11: «карта доводов» — широкая аналитическая таблица, печатается альбомно.
+    # Гейтед строго на этот тип; процессуальные документы (жалоба/отзыв/претензия) не затронуты.
+    if doc_type == "карта-доводов":
+        sec.orientation = WD_ORIENT.LANDSCAPE
+        sec.page_width, sec.page_height = Mm(297), Mm(210)   # python-docx не свопит сам
+        sec.left_margin, sec.right_margin = Cm(1.5), Cm(1.5)
     _enable_hyphenation(doc)
 
     numbering = Numbering(doc)
@@ -864,7 +876,7 @@ def main():
     if not header_lines and case:
         header_lines = _header_from_case(case, doc_type)
 
-    render(header_lines, blocks, args.out_docx, case=case)
+    render(header_lines, blocks, args.out_docx, case=case, doc_type=doc_type)
     sys.stderr.write("format_doc: готово -> %s (тип: %s, блоков: %d)\n"
                      % (args.out_docx, doc_type, len(blocks)))
 
