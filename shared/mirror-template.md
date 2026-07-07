@@ -43,7 +43,7 @@ low_confidence_fields: []         # критичные реквизиты с н�
 | date | нет | Дата документа |
 | pages | нет | Количество страниц |
 | extraction_method | да | pdf-text, pdf-text+vision, vision, structural, docx-parse, text-read, manual (см. [`shared/ocr.md`](ocr.md)) |
-| extraction_model | нет | Модель, выполнившая извлечение (haiku, sonnet) |
+| extraction_model | нет | Модель, выполнившая извлечение: `haiku` / `sonnet` / `opus` — **фактическая** модель, не подменять (E.10; если извлекал Opus-агент напрямую — пиши `opus`, не `sonnet`) |
 | extraction_date | да | Дата создания зеркала |
 | confidence | да | high, medium, low |
 | content_hash | да | `sha256:<hex>` содержимого — ключ кэша OCR (vision один раз; [`shared/ocr.md` §4](ocr.md)) |
