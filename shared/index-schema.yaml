@@ -4,6 +4,10 @@
 # Изменения v2 → v3:
 # - Добавлены поля content_hash, duplicates, duplicate_copies для дедупликации
 #   по содержимому (см. shared/conventions.md, раздел «Дедупликация по content_hash»).
+# Дополнено 2026-06 (аудит №2, Cowork-first): поле raw_pristine — режим манифеста для .vassal/raw/.
+# Байтовые копии в raw/ хранятся только для opponent/court (chain of custody); для client —
+# только манифест (origin + content_hash в записи). Аддитивно и обратно совместимо:
+# запись без raw_pristine трактуется как false.
 
 version: 3
 last_updated: "2026-03-26T14:30:00"    # ISO datetime, обновляется при каждом изменении
@@ -28,25 +32,40 @@ documents:
     seal: false                           # Есть ли печать
     signature: false                      # Есть ли подпись
     completeness: "full"                  # full | partial | fragment
-    quality: "high"                       # high | medium | low (качество текста/скана)
-    needs_manual_review: false            # true если OCR дал низкое качество
+    quality: "high"                       # high | medium | low — критерий по shared/ocr.md §7
+                                          # (метод извлечения + число [Нечитаемо] + low-conf критичные поля)
+    needs_manual_review: false            # true: низкое качество vision / структурный режим /
+                                          # обрезанный рендер / low-conf критичное поле (shared/ocr.md §7)
     pages: null                           # Количество страниц (число)
 
-    source: "client"                      # client | opponent | court | public
+    source: "client"                      # client | opponent | court | public | ally | own-work
+                                          # ally — процессуальный союзник на нашей стороне (соответчик /
+                                          #   соистец / третье лицо; напр. отзыв АУ при защите СРО).
+                                          #   Пристинная копия — как opponent/court (chain of custody),
+                                          #   но без опп-экспресс-анализа (E.9).
+                                          # own-work — собственная аналитика/наработка юриста (не доказательство,
+                                          #   не материалы клиента); без пристинной копии (E.9).
     added: "2026-03-26"                   # Дата добавления в индекс
-    processed_by: "haiku"                 # Модель, обработавшая документ
+    processed_by: "haiku"                 # Модель, обработавшая документ: haiku | sonnet | opus
+                                          # (фактическая модель — не подменять; opus допустим, E.10)
 
     # Происхождение файла
     origin:
       name: "исходное_имя.pdf"           # Имя файла как получено (до переименования)
       received: "2026-03-26"             # Дата получения
-      intake_batch: "intake-2026-03-26"  # Имя пакета (папка в raw/)
+      intake_batch: "intake-2026-03-26"  # Логический пакет приёма (папка в raw/ создаётся
+                                          # только для пристинных копий opponent/court)
+    raw_pristine: false                   # true → пристинная байтовая копия лежит в .vassal/raw/
+                                          # (source ∈ {opponent, court} или keep-pristine, chain of custody).
+                                          # false → только манифест (origin + content_hash в этой записи),
+                                          # без байтовой копии (оригинал сохранён внешне).
 
     # Целостность зеркала
     content_hash: "sha256:..."            # SHA-256 содержимого файла (hex). Считается при ingest.
                                           # Используется для: (1) дедупа по содержимому,
                                           # (2) детекции изменения файла (update-index),
-                                          # (3) автосвязки переименованных файлов.
+                                          # (3) автосвязки переименованных файлов,
+                                          # (4) ключ кэша OCR — vision выполняется один раз (shared/ocr.md §4).
     mirror_stale: false                   # true если content_hash файла отличается от хэша на момент создания зеркала
     last_verified: "2026-03-26"          # Дата последней проверки
 
@@ -68,8 +87,8 @@ documents:
     role_in_bundle: null                  # main | appendix | exhibit
 
     # Процессуальный статус
-    filing_status: null                   # null | draft | submitted | filed
-    filing_folder: null                   # Путь к процессуальной папке
+    filing_status: null                   # null | draft | submitted | filed; пишет build-submission/вручную, только главному документу (приложения не помечаем)
+    filing_folder: null                   # последняя папка подачи главного дока; членство приложений — в .vassal/submissions/, не здесь
 
     tags: []                              # Произвольные теги
 

@@ -50,7 +50,7 @@ Push метаданных дела (`case.yaml`), глобального про�
 3. Валидируй конфиг:
    - Обязательные поля: `notion.databases.cases` (ID), `notion.databases.judges` (ID).
    - Опциональные: `notion.databases.counterparties` (этап 6.2b; если задана -- фаза 4 «Upsert в Counterparties» активна, если null/отсутствует -- фаза 4 пропускается, на остальном синке не сказывается), `notion.fields_manual_only`.
-4. **Feature detection Notion MCP** (по паттерну `shared/conventions.md` → «Внешние зависимости и fallback»):
+3.1. **Feature detection Notion MCP** (по паттерну `shared/conventions.md` → «Внешние зависимости и fallback»):
    - Попытка короткого `notion-search` с минимальным запросом для проверки авторизации.
    - Если MCP недоступен / не авторизован → graceful degradation: не падать, предупредить Сюзерена, отметить факт в `.vassal/notion-sync.log`, выйти без изменений.
 
@@ -77,8 +77,8 @@ Push метаданных дела (`case.yaml`), глобального про�
 | `Номер дела` (title) | `case.number` (или `temp-{слаг}` если null) | TITLE |
 | `Суд` | `case.court` | SELECT (auto-create option) |
 | `Наш клиент` | `case.our_client` → `parties[party_id == our_client.party_id].short_name` | RICH_TEXT |
-| `Истец` | `parties[role == "Истец"][0].short_name` | RICH_TEXT |
-| `Ответчик` | `parties[role == "Ответчик"][0].short_name` | RICH_TEXT |
+| `Истец` | `parties[role == "Истец"][0].short_name`; для банкротства / особого производства роли «Истец/Ответчик» отсутствуют → прочерк (ключевые стороны видны через `Наш клиент` + relation `Оппонент`) | RICH_TEXT |
+| `Ответчик` | `parties[role == "Ответчик"][0].short_name`; см. примечание к «Истец» | RICH_TEXT |
 | `Наша роль` | роль `parties[party_id == our_client.party_id].role` | SELECT |
 | `Стадия` | вывод по `case.status` (см. таблицу маппинга ниже) | SELECT |
 | `Следующее заседание` | `case.next_hearing` | DATE |
@@ -92,8 +92,13 @@ Push метаданных дела (`case.yaml`), глобального про�
    - `suspended` → «1 инстанция (приостановлено)»
    - `pending_appeal` → «Апелляция»
    - `pending_cassation` → «Кассация»
+   - `pending_settlement` → «Примирение»
+   - `settled` → «Завершено (мировое)»
+   - `withdrawn` → «Завершено (отказ)»
    - `completed` → «Исполнение»
    - `archived` → «Закрыто»
+
+   Имена опций SELECT держать согласованными со списком в `scripts/notion-init.md`, чтобы auto-create не плодил дубли стадий.
 
 9. **`fields_manual_only`** -- из конфига (например, `Статус: won/lost/active`). Эти поля **не передаются** в Notion при upsert (читаются и игнорируются). Юрист правит их в Notion вручную.
 
