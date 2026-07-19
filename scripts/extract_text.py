@@ -15,8 +15,10 @@ extract_text.py — детерминированная Python-нога OCR-мо�
   - вычисление content_hash для кэша (F3.2; само решение о кэше — агентское);
   - рендер страницы(ц) в PNG для vision через pymupdf (надёжнее системного
     pdftoppm, который у файлового Read падает «unsafe location») + guard обрезки (F3.5);
-  - ОПЦИОНАЛЬНАЯ tesseract спот-сверка ОДНОГО поля по вендоренному rus.traineddata
-    (F3.1, вторая нога) — для независимой сверки критичной цифры (ИНН/сумма/дата).
+  - tesseract спот-сверка критичного поля по вендоренному rus.traineddata (F3.1,
+    вторая нога) — независимое второе чтение цифры (ИНН/сумма/доля/дата) с машинным
+    вердиктом match/mismatch/inconclusive (F.18). Деградирует тихо: нет словаря или
+    бинаря, таймаут → available:false, приём продолжается на результате vision.
 
 Режимы запуска:
     # 1) извлечение (основной режим, вызывается скиллами ingest):
@@ -26,8 +28,11 @@ extract_text.py — детерминированная Python-нога OCR-мо�
     # 2) рендер одной страницы в PNG (для vision-ноги агента):
     python3 extract_text.py --render <file.pdf> --page N [--render-dir <папка>] [--width 1500]
 
-    # 3) tesseract спот-сверка одного поля (кроп → одна строка):
-    python3 extract_text.py --spot-check <crop.png> [--tessdata <путь>]
+    # 3) tesseract спот-сверка критичного поля (второе, независимое чтение):
+    python3 extract_text.py --spot-check <file.pdf> --page N --expect "3390000"
+                            [--region x0,y0,x1,y1]   # доли страницы, если целая — таймаут
+                            [--psm N] [--tessdata <путь>] [--render-dir <папка>]
+    python3 extract_text.py --spot-check <crop.png> --psm 7 --expect "7707083893"
 
 Выход: JSON. Поля контракта — см. shared/ocr.md §3.
 """
@@ -679,7 +684,20 @@ def render_page_to_png(filepath: str, page_index0: int, render_dir: str,
                 "warnings": [f"Рендер не удался: {msg}"]}
 
 
-# --- Tesseract спот-сверка одного поля (F3.1, опционально, вариант B) --------
+# --- Tesseract спот-сверка критичного поля (F3.1; оживлена в F.18) -----------
+#
+# До F.18 функция была достижима только из shell вручную: вход — готовый КРОП поля,
+# которого вызывающему негде было взять (геометрию поля vision не отдаёт), а сравнение
+# «прочитано агентом vs прочитано движком» оставалось на глаз той же модели, что и
+# транскрибировала. Поэтому здесь появились две вещи: (1) вход «PDF + номер страницы»
+# (кроп — необязательное сужение, в долях страницы), (2) машинный троичный вердикт
+# по --expect. Смысл ноги — второе чтение с ДРУГИМИ режимами отказа, чем у vision.
+
+_SPOT_TIMEOUT_CROP = 30              # кроп одной строки
+_SPOT_TIMEOUT_PAGE = 120             # целая страница при ~1500 px, с запасом
+_SPACE_CHARS = "     ⁠"
+_NUM_TOKEN_RE = re.compile(r"\d[\d" + _SPACE_CHARS + r"\s.,]*\d|\d")
+
 
 def find_tessdata() -> str:
     """Путь к вендоренным tessdata: $VASSAL_TESSDATA или scripts/tessdata/."""
@@ -692,30 +710,168 @@ def find_tessdata() -> str:
     return ""
 
 
-def spot_check_field(image_path: str, tessdata_dir: str = "") -> dict:
-    """Tesseract по КРОПУ одного поля (--psm 7, одна строка), независимое чтение.
+def _num_key(value) -> str:
+    """Ключ сравнения числового реквизита: цифры + значащая дробная часть.
 
-    Только для одиночного критичного реквизита (цифра в ИНН/сумме/дате), где vision
-    не уверен. На целую страницу не запускать — упирается в таймаут.
+    «3 390 000,00» → «3390000»; «12.03.2026» → «12032026»; «15,5» → «15.5».
+    Ведущие нули НЕ срезаются (ИНН регионов 01–09 начинается с нуля). Нечисловое → "".
     """
+    t = re.sub(r"[" + _SPACE_CHARS + r"\s]+", "", str(value or ""))
+    if not t or not re.fullmatch(r"[\d.,]+", t):
+        return ""
+    m = re.fullmatch(r"(.*?)([.,])(\d{1,2})$", t)     # последний разделитель = десятичный
+    intpart, frac = (m.group(1), m.group(3)) if m else (t, "")
+    intpart = re.sub(r"[.,]", "", intpart)            # остальные — разряды тысяч
+    if not intpart.isdigit():
+        return ""
+    frac = frac.rstrip("0")
+    return intpart + ("." + frac if frac else "")
+
+
+def _text_key(value) -> str:
+    """Ключ сравнения нечислового реквизита: нижний регистр, ё→е, только буквы/цифры."""
+    return re.sub(r"[^0-9a-zа-я]+", "", str(value or "").lower().replace("ё", "е"))
+
+
+def _spot_is_blind(ocr_text: str) -> bool:
+    """Движок сам ничего внятного не прочитал (пусто/каша) → вердикт inconclusive.
+
+    Считаем содержательными буквы и цифры: на кропе одного реквизита букв может не
+    быть вовсе («3 390 000,00»), и объявлять такое чтение слепым нельзя — иначе
+    расхождение именно там, где сверка точнее всего, превратится в inconclusive.
+    Порог `_is_garbage` рассчитан на текстовый слой в сотни символов, поэтому один
+    он тут не работает: страница, с которой tesseract снял только пунктуацию,
+    его не срабатывает и проходила бы как «прочитанная».
+    """
+    t = (ocr_text or "").strip()
+    letters = sum(1 for ch in t if ch.isalpha())
+    digits = sum(1 for ch in t if ch.isdigit())
+    if letters + digits < 2:
+        return True
+    return _is_garbage(_text_diagnostics(t))
+
+
+def compare_field(expected, ocr_text: str) -> dict:
+    """Машинная сверка «прочитано агентом vs прочитано tesseract» (F.18).
+
+    Сверяет ПРОГРАММА, а не модель — иначе петля самооценки просто удлиняется.
+    Вердикт троичный: `inconclusive` (движок ослеп на этой странице) — НЕ повод
+    поднимать расхождение, иначе слепой tesseract зашумит флагами каждый документ.
+    """
+    numeric_key = _num_key(expected)
+    engine_numbers = []
+    if numeric_key:
+        found = {k for k in (_num_key(tok) for tok in _NUM_TOKEN_RE.findall(ocr_text or "")) if k}
+        matched = numeric_key in found
+        engine_numbers = sorted(found)[:12]
+    else:
+        key = _text_key(expected)
+        matched = bool(key) and key in _text_key(ocr_text)
+    if matched:
+        verdict = "match"
+    elif _spot_is_blind(ocr_text):
+        verdict = "inconclusive"
+    else:
+        verdict = "mismatch"
+    return {"expected": str(expected), "verdict": verdict,
+            "numeric": bool(numeric_key), "engine_numbers": engine_numbers}
+
+
+def _render_for_spot(pdf_path: str, page_index0: int, render_dir: str, region=None) -> dict:
+    """PNG страницы (или её области) под спот-сверку. region — доли страницы 0..1."""
+    if not region:
+        res = render_page_to_png(pdf_path, page_index0, render_dir, DEFAULT_RENDER_WIDTH)
+        res["regioned"] = False
+        return res
+    try:
+        import fitz
+    except ImportError:
+        res = render_page_to_png(pdf_path, page_index0, render_dir, DEFAULT_RENDER_WIDTH)
+        res.setdefault("warnings", []).append(
+            "region требует pymupdf — отрендерена страница целиком (poppler кроп не умеет)")
+        res["regioned"] = False
+        return res
+    try:
+        doc = fitz.open(pdf_path)
+        if page_index0 < 0 or page_index0 >= len(doc):
+            n = len(doc)
+            doc.close()
+            return {"path": None, "regioned": False,
+                    "warnings": [f"Страница {page_index0 + 1} вне диапазона (всего {n})"]}
+        pg = doc[page_index0]
+        r = pg.rect
+        x0, y0, x1, y1 = region
+        clip = fitz.Rect(r.x0 + x0 * r.width, r.y0 + y0 * r.height,
+                         r.x0 + x1 * r.width, r.y0 + y1 * r.height)
+        # кроп мельче страницы — поднимаем масштаб, иначе мелкая цифра не читается
+        zoom = max(1.0, min(DEFAULT_RENDER_WIDTH / max(clip.width, 1.0), 8.0))
+        pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+        os.makedirs(render_dir, exist_ok=True)
+        out = os.path.join(render_dir, f"{Path(pdf_path).stem}_p{page_index0 + 1}_spot.png")
+        pix.save(out)
+        doc.close()
+        return {"path": out, "regioned": True, "width": pix.width, "height": pix.height,
+                "warnings": []}
+    except Exception as e:
+        ec, rt, msg = classify_open_error(pdf_path, e)
+        return {"path": None, "regioned": False, "error_class": ec, "retryable": rt,
+                "warnings": [f"Рендер области не удался: {msg}"]}
+
+
+def spot_check_field(target: str, page: int = 1, region=None, expect="",
+                     psm: int = 0, tessdata_dir: str = "", render_dir: str = "") -> dict:
+    """Независимое второе чтение критичного поля движком tesseract (не нейросетью).
+
+    Вход — PDF + номер страницы (1-based; рендерим сами) ИЛИ готовый PNG/JPG.
+    `region` (x0,y0,x1,y1 в долях страницы) сужает область — запасной путь, когда
+    целая страница упирается в таймаут; кроп работает только на pymupdf.
+    `expect` — то, что прочитал агент: сверка машинная (см. compare_field).
+
+    Не бросает исключений и НЕ блокирует приём: нет словаря / бинаря / таймаут →
+    available:false, вызывающий продолжает с результатом vision (shared/ocr.md §9).
+    """
+    warnings = []
     tessdata_dir = tessdata_dir or find_tessdata()
     if not tessdata_dir:
-        return {"text": "", "available": False,
+        return {"available": False, "text": "", "verdict": None,
                 "warnings": ["rus.traineddata не найден (scripts/tessdata/ или $VASSAL_TESSDATA) — спот-сверка пропущена"]}
+
+    image_path, full_page = target, True
+    if Path(target).suffix.lower() == ".pdf":
+        rd = render_dir or os.path.join(os.getcwd(), "outputs", "spot")
+        rendered = _render_for_spot(target, max(1, page) - 1, rd, region)
+        warnings.extend(rendered.get("warnings", []))
+        if not rendered.get("path"):
+            warnings.append("рендер страницы не удался — спот-сверка пропущена")
+            return {"available": False, "text": "", "verdict": None, "warnings": warnings}
+        image_path = rendered["path"]
+        full_page = not rendered.get("regioned")
+    elif region:
+        warnings.append("region задан для готового изображения — игнорируется (кроп делается при рендере из PDF)")
+
+    psm = psm or (3 if full_page else 7)              # 3 — авторазметка страницы, 7 — одна строка
+    timeout = _SPOT_TIMEOUT_PAGE if full_page else _SPOT_TIMEOUT_CROP
     env = dict(os.environ)
-    env["TESSDATA_PREFIX"] = tessdata_dir
+    env["TESSDATA_PREFIX"] = tessdata_dir             # прямой вызов словарь не увидит (F.5)
     try:
         result = subprocess.run(
-            ["tesseract", image_path, "stdout", "-l", "rus", "--psm", "7"],
-            capture_output=True, text=True, timeout=30, env=env
+            ["tesseract", image_path, "stdout", "-l", "rus", "--psm", str(psm)],
+            capture_output=True, text=True, timeout=timeout, env=env
         )
-        return {"text": result.stdout.strip(), "available": True, "warnings": []}
     except FileNotFoundError:
-        return {"text": "", "available": False,
-                "warnings": ["бинарь tesseract не найден — спот-сверка пропущена"]}
+        warnings.append("бинарь tesseract не найден — спот-сверка пропущена")
+        return {"available": False, "text": "", "verdict": None, "warnings": warnings}
     except subprocess.TimeoutExpired:
-        return {"text": "", "available": False,
-                "warnings": ["tesseract таймаут на кропе — спот-сверка пропущена"]}
+        warnings.append(f"tesseract таймаут {timeout} c — спот-сверка пропущена; "
+                        f"сузьте область через --region или продолжайте без неё")
+        return {"available": False, "text": "", "verdict": None, "warnings": warnings}
+
+    text = (result.stdout or "").strip()
+    out = {"available": True, "text": text, "psm": psm, "image": image_path,
+           "verdict": None, "warnings": warnings}
+    if str(expect or "").strip():
+        out.update(compare_field(expect, text))
+    return out
 
 
 # --- Диспетчер --------------------------------------------------------------
@@ -767,6 +923,17 @@ def _get_opt(argv, name, default=None):
     return default
 
 
+def _parse_region(raw: str):
+    """«x0,y0,x1,y1» в долях страницы (0..1) → кортеж. Мусор → ValueError."""
+    vals = [float(p) for p in str(raw).replace(" ", "").split(",")]
+    if len(vals) != 4:
+        raise ValueError("нужно ровно 4 числа")
+    x0, y0, x1, y1 = vals
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+        raise ValueError("координаты вне 0..1 или x0≥x1 / y0≥y1")
+    return (x0, y0, x1, y1)
+
+
 def main():
     # Печатаем UTF-8 независимо от консоли ОС (Windows cp1251 иначе рвёт кириллицу/BOM;
     # в Cowork/Linux безвредно — там stdout уже UTF-8).
@@ -780,17 +947,33 @@ def main():
     if not argv:
         print("Использование: python3 extract_text.py <файл> [--output-dir DIR] [--render-dir DIR]")
         print("               python3 extract_text.py --render <pdf> --page N [--render-dir DIR] [--width W]")
-        print("               python3 extract_text.py --spot-check <crop.png> [--tessdata DIR]")
+        print("               python3 extract_text.py --spot-check <pdf|png> [--page N] [--expect ЗНАЧЕНИЕ]")
+        print("                                       [--region x0,y0,x1,y1] [--psm N] [--tessdata DIR]")
         sys.exit(1)
 
-    # Режим 3: спот-сверка поля
+    # Режим 3: спот-сверка критичного поля вторым движком (F.18)
     if "--spot-check" in argv:
-        img = _get_opt(argv, "--spot-check")
-        if not img or not os.path.exists(img):
-            print(json.dumps({"error": f"Изображение не найдено: {img}"}, ensure_ascii=False))
+        target = _get_opt(argv, "--spot-check")
+        if not target or not os.path.exists(target):
+            print(json.dumps({"error": f"Файл не найден: {target}"}, ensure_ascii=False))
             sys.exit(1)
-        print(json.dumps(spot_check_field(img, _get_opt(argv, "--tessdata", "")),
-                         ensure_ascii=False, indent=2))
+        region = None
+        if "--region" in argv:
+            try:
+                region = _parse_region(_get_opt(argv, "--region", ""))
+            except (ValueError, AttributeError) as e:
+                print(json.dumps({"error": f"--region: {e}; формат «x0,y0,x1,y1» в долях страницы"},
+                                 ensure_ascii=False))
+                sys.exit(1)
+        print(json.dumps(spot_check_field(
+            target,
+            page=int(_get_opt(argv, "--page", "1")),
+            region=region,
+            expect=_get_opt(argv, "--expect", "") or "",
+            psm=int(_get_opt(argv, "--psm", "0")),
+            tessdata_dir=_get_opt(argv, "--tessdata", "") or "",
+            render_dir=_get_opt(argv, "--render-dir", "") or "",
+        ), ensure_ascii=False, indent=2))
         return
 
     # Режим 2: рендер одной страницы
