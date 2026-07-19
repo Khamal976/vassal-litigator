@@ -39,6 +39,8 @@ import re
 import errno
 import hashlib
 import subprocess
+import shutil
+import glob
 from pathlib import Path
 
 # --- Параметры по умолчанию -------------------------------------------------
@@ -259,6 +261,173 @@ def _pdf_error(error_class: str, retryable: bool, message: str, pages: int = 0) 
             "warnings": [message]}
 
 
+# --- Движок poppler: fallback, когда нет pymupdf (F.2) ----------------------
+#
+# Зачем. pymupdf был ЕДИНСТВЕННЫМ путём к PDF: без него не работало ни
+# программное извлечение, ни рендер страниц — а значит и vision, потому что
+# vision читает PNG, который рендерил тот же pymupdf. Задокументированный в
+# ocr.md fallback «нет pymupdf → vision» был замкнут сам на себя. В боевых
+# прогонах pymupdf регулярно не вставал (25-МБ колесо, прокси, а до F.1 —
+# ещё и падавший setup.sh), и агент каждый раз вручную уходил на poppler.
+# Здесь этот обход сделан штатным: poppler (pdftotext/pdftoppm/pdfinfo)
+# предустановлен в песочнице Cowork.
+#
+# Граница движка. poppler не отдаёт список изображений страницы, поэтому
+# страницу без текстового слоя нельзя отличить от пустой. Классифицируем её
+# как `scan` (консервативно: лишняя страница уйдёт на vision — это дешевле,
+# чем принять скан за пустую и потерять содержание).
+
+def _poppler_bin(name: str):
+    """Путь к утилите poppler или None."""
+    return shutil.which(name)
+
+
+def poppler_available() -> bool:
+    return bool(_poppler_bin("pdftotext"))
+
+
+def _pdf_page_count_poppler(filepath: str) -> int:
+    """Число страниц через pdfinfo; 0 — если не удалось."""
+    exe = _poppler_bin("pdfinfo")
+    if not exe:
+        return 0
+    try:
+        r = subprocess.run([exe, filepath], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return 0
+    m = re.search(r"^Pages:\s+(\d+)", r.stdout or "", re.M)
+    return int(m.group(1)) if m else 0
+
+
+def _classify_text_only(txt: str) -> str:
+    """Статус страницы по одному тексту (без доступа к изображениям).
+
+    Аналог `_classify_page` для poppler. Два отличия:
+
+    1. `blank` не выделяется — страница без текста считается `scan`
+       (см. «Граница движка» выше).
+    2. Строже порог «нет кириллицы». Базовое правило `_is_garbage` требует
+       ≥30 букв, потому что рассчитано на cp1251-кашу, где мусорных букв
+       сотни. У poppler отказ выглядит иначе: если в PDF нет ToUnicode-карты
+       для подмножества шрифта, глифы **молча выпадают** — остаются цифры и
+       пунктуация, букв мало, и до порога 30 дело не доходит. Проверено на
+       фикстуре: 293 симв. у pymupdf против 107 у poppler с полностью
+       потерянной кириллицей, и страница прошла бы как годный текст.
+       Поэтому на fallback-пути: есть буквы, но кириллицы нет вовсе → на
+       vision. Ложное срабатывание (целиком латинская страница) стоит одного
+       прохода vision — это дешевле потери текста, и та же логика уже принята
+       в `_is_garbage`.
+    """
+    stripped = (txt or "").strip()
+    if len(stripped) < 10:
+        return "scan"
+    diag = _text_diagnostics(txt)
+    if _is_garbage(diag):
+        return "garbage"
+    alpha = diag.get("alpha_count", 0)
+    # (а) глифы выпали почти полностью — остались цифры, пробелы и пунктуация.
+    #     Ровно этот профиль дала фикстура: 107 симв. текста при ОДНОЙ букве.
+    if len(stripped) >= 40 and alpha < 5:
+        return "garbage"
+    # (б) буквы есть, но кириллицы нет вовсе — частичное выпадение глифов.
+    if alpha >= 5 and diag.get("cyr_ratio", 1.0) == 0.0:
+        return "garbage"
+    return "text"
+
+
+def _pdf_pages_poppler(filepath: str):
+    """(pages, statuses, text_parts) через pdftotext. Бросает исключение при сбое.
+
+    Один вызов на документ: pdftotext разделяет страницы переводом формы
+    (\\f), поэтому и число страниц, и постраничный текст берутся из одной
+    выдачи. Это заодно снимает зависимость от `pdfinfo` — в некоторых сборках
+    poppler (напр. в составе Git for Windows) есть pdftotext, но нет pdfinfo.
+    """
+    exe = _poppler_bin("pdftotext")
+    if not exe:
+        raise RuntimeError("poppler (pdftotext) недоступен")
+
+    # -layout сохраняет колоночную вёрстку (важно для таблиц и шапок).
+    r = subprocess.run([exe, "-layout", filepath, "-"],
+                       capture_output=True, timeout=300)
+    if r.returncode != 0:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(f"pdftotext rc={r.returncode}: {err[:200]}")
+
+    raw = (r.stdout or b"").decode("utf-8", "replace")
+    chunks = raw.split("\f")
+    if chunks and not chunks[-1].strip():
+        chunks.pop()            # pdftotext ставит \f и после последней страницы
+    if not chunks:
+        raise RuntimeError("pdftotext вернул пустую выдачу")
+
+    # Сверка с pdfinfo, если он есть: расхождение — сигнал, что разбор по \f
+    # разошёлся с реальной пагинацией (не блок, флаг в предупреждениях выше).
+    declared = _pdf_page_count_poppler(filepath)
+    if declared and declared != len(chunks):
+        chunks = chunks[:declared] + [""] * max(0, declared - len(chunks))
+
+    statuses, text_parts = [], []
+    for i, txt in enumerate(chunks, start=1):
+        status = _classify_text_only(txt)
+        statuses.append(status)
+        text_parts.append(txt if status == "text" else f"[[VISION_PAGE {i}: {status}]]")
+    return len(chunks), statuses, text_parts
+
+
+def _render_page_poppler(filepath: str, page_index0: int, render_dir: str, width: int) -> dict:
+    """Рендер одной страницы в PNG через pdftoppm.
+
+    Плавающий паддинг имени. pdftoppm дописывает номер страницы с ведущими
+    нулями по разрядности ОБЩЕГО числа страниц: `p-1.png` для 9-страничного
+    документа и `p-01.png` для 10-страничного. Боевой прогон 16.07 на этом
+    молча получал 0 символов, потому что искал файл по угаданному имени.
+    Поэтому рендерим в отдельный подкаталог и забираем то, что реально
+    появилось, а не то, что ожидали.
+    """
+    exe = _poppler_bin("pdftoppm")
+    if not exe:
+        return {"path": None, "cropped": False,
+                "warnings": ["ни pymupdf, ни poppler (pdftoppm) недоступны"]}
+
+    n = page_index0 + 1
+    out_dir = os.path.join(render_dir, f"_p{n}")
+    os.makedirs(out_dir, exist_ok=True)
+    for stale in glob.glob(os.path.join(out_dir, "*.png")):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+    prefix = os.path.join(out_dir, "page")
+    try:
+        subprocess.run([exe, "-png", "-scale-to-x", str(width), "-scale-to-y", "-1",
+                        "-f", str(n), "-l", str(n), filepath, prefix],
+                       capture_output=True, timeout=180, check=True)
+    except Exception as e:
+        ec, rt, msg = classify_open_error(filepath, e)
+        return {"path": None, "cropped": False, "error_class": ec, "retryable": rt,
+                "warnings": [f"Рендер через pdftoppm не удался: {msg}"]}
+
+    produced = sorted(glob.glob(os.path.join(out_dir, "page*.png")))
+    if not produced:
+        return {"path": None, "cropped": False,
+                "warnings": [f"pdftoppm не создал PNG для стр. {n}"]}
+
+    # Имя, ожидаемое остальным пайплайном (как у fitz-ветки).
+    out = os.path.join(render_dir, f"{Path(filepath).stem}_p{n}.png")
+    shutil.move(produced[0], out)
+    try:
+        os.rmdir(out_dir)
+    except OSError:
+        pass
+    # Guard обрезки (F3.5) здесь недоступен: без геометрии страницы аспект
+    # не с чем сравнивать. Помечаем явно, чтобы «не проверено» не читалось
+    # как «проверено и ок».
+    return {"path": out, "cropped": False, "render_engine": "poppler",
+            "warnings": ["рендер через poppler: guard обрезки (F3.5) не применялся"]}
+
+
 # --- Извлечение из PDF ------------------------------------------------------
 
 def extract_pdf(filepath: str,
@@ -269,41 +438,56 @@ def extract_pdf(filepath: str,
     Vision — основной путь для скан/мусорных страниц (агентская сторона, см. shared/ocr.md).
     Здесь только директива: какие страницы и почему.
     """
+    engine_warnings = []
     try:
         import fitz  # pymupdf
+        engine = "pymupdf"
     except ImportError:
-        return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-                "needs_vision": False, "vision_pages": [], "vision_reason": None,
-                "structural_recommended": False,
-                "warnings": ["pymupdf не установлен"]}
+        # F.2: не отказ, а переход на poppler (предустановлен в песочнице Cowork).
+        if not poppler_available():
+            return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+                    "needs_vision": False, "vision_pages": [], "vision_reason": None,
+                    "structural_recommended": False,
+                    "warnings": ["ни pymupdf, ни poppler (pdftotext) не установлены — PDF не прочитан"]}
+        engine = "poppler"
+        engine_warnings.append(
+            "pymupdf недоступен — извлечение через poppler (pdftotext); "
+            "пустые страницы классифицируются как скан и уходят на vision")
 
-    try:
-        doc = fitz.open(filepath)
-    except Exception as e:
-        # E.14 а/б: различаем «не материализован (OneDrive) → ретрай» и «реально битый → ветка битого».
-        ec, rt, msg = classify_open_error(filepath, e)
-        return _pdf_error(ec, rt, msg)
+    if engine == "poppler":
+        try:
+            pages, statuses, text_parts = _pdf_pages_poppler(filepath)
+        except Exception as e:
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg)
+    else:
+        try:
+            doc = fitz.open(filepath)
+        except Exception as e:
+            # E.14 а/б: различаем «не материализован (OneDrive) → ретрай» и «реально битый → ветка битого».
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg)
 
-    pages = len(doc)
-    statuses = []
-    text_parts = []      # текст для 'text'-страниц; плейсхолдер для остальных
-    try:
-        for i, page in enumerate(doc):
-            status = _classify_page(page)
-            statuses.append(status)
-            if status == "text":
-                text_parts.append(page.get_text())
-            elif status == "blank":
-                text_parts.append("")
-            else:  # scan / garbage — отдаётся vision
-                text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
-    except Exception as e:
-        # Файл «открылся, но развалился» при чтении страниц — как правило дегидратация
-        # cloud-only на маунте (E.14а): не падаем трейсбеком, а классифицируем.
+        pages = len(doc)
+        statuses = []
+        text_parts = []      # текст для 'text'-страниц; плейсхолдер для остальных
+        try:
+            for i, page in enumerate(doc):
+                status = _classify_page(page)
+                statuses.append(status)
+                if status == "text":
+                    text_parts.append(page.get_text())
+                elif status == "blank":
+                    text_parts.append("")
+                else:  # scan / garbage — отдаётся vision
+                    text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
+        except Exception as e:
+            # Файл «открылся, но развалился» при чтении страниц — как правило дегидратация
+            # cloud-only на маунте (E.14а): не падаем трейсбеком, а классифицируем.
+            doc.close()
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg, pages)
         doc.close()
-        ec, rt, msg = classify_open_error(filepath, e)
-        return _pdf_error(ec, rt, msg, pages)
-    doc.close()
 
     # страницы под vision (1-based для человека/агента)
     vision_idx = [i + 1 for i, s in enumerate(statuses) if s in ("scan", "garbage")]
@@ -343,7 +527,7 @@ def extract_pdf(filepath: str,
     composite = _detect_composite(text_parts, statuses) if pages > 1 else {
         "composite_suspected": False, "composite_reasons": []}
 
-    warnings = []
+    warnings = list(engine_warnings)   # F.2: чем читали PDF, если не pymupdf
     if has_garbage:
         warnings.append("Обнаружен мусорный текстовый слой — страницы отправлены на vision (F3.3)")
     if structural_recommended:
@@ -457,7 +641,9 @@ def render_page_to_png(filepath: str, page_index0: int, render_dir: str,
     try:
         import fitz
     except ImportError:
-        return {"path": None, "cropped": False, "warnings": ["pymupdf не установлен"]}
+        # F.2: рендер — вторая нога, которая раньше отваливалась вместе с pymupdf
+        # и уносила с собой vision (ему нечего было читать).
+        return _render_page_poppler(filepath, page_index0, render_dir, width)
 
     try:
         doc = fitz.open(filepath)

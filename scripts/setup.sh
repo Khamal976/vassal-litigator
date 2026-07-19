@@ -13,10 +13,45 @@ echo "=== vassal-litigator: установка зависимостей ==="
 
 # 1. Python-зависимости — ПЕРВЫМ и независимо (критично; ставятся без root).
 #    extract_text.py зависит от pymupdf (import fitz).
-echo "→ Python-зависимости (PyYAML, pymupdf, python-docx, openpyxl)..."
-pip install --break-system-packages -q PyYAML pymupdf python-docx openpyxl 2>/dev/null \
-    || pip install -q PyYAML pymupdf python-docx openpyxl 2>/dev/null \
-    || echo "⚠️  Часть Python-пакетов не установилась — см. статус ниже."
+PYDEPS="PyYAML pymupdf python-docx openpyxl"
+echo "→ Python-зависимости ($PYDEPS)..."
+
+# Ищем рабочий pip. `python3 -m pip` надёжнее голого `pip`: в песочнице `pip`
+# в PATH может не быть вовсе, а прежняя версия скрипта звала именно его.
+PIP=""
+for cand in "python3 -m pip" "pip3" "pip"; do
+    if $cand --version > /dev/null 2>&1; then PIP="$cand"; break; fi
+done
+
+if [ -z "$PIP" ]; then
+    echo "✗ pip не найден (пробовал: python3 -m pip, pip3, pip) — Python-зависимости не поставить."
+else
+    # F.3: пишем в лог, а не в /dev/null. Боевой отказ (прокси, таймаут на
+    # 25-МБ колесе pymupdf, PEP 668) раньше был невидим — пользователь видел
+    # только «часть пакетов не установилась», без причины.
+    PIP_LOG="${TMPDIR:-/tmp}/vassal-pip.log"
+    : > "$PIP_LOG"
+    # --timeout/--retries: pymupdf ~25 МБ, за прокси качается долго и срывается.
+    PIP_OPTS="--timeout 60 --retries 3"
+    # --break-system-packages: PEP 668 (externally-managed). На старых pip
+    # флага нет — тогда вторая попытка без него.
+    if ! $PIP install --break-system-packages -q $PIP_OPTS $PYDEPS >> "$PIP_LOG" 2>&1; then
+        if ! $PIP install -q $PIP_OPTS $PYDEPS >> "$PIP_LOG" 2>&1; then
+            echo "⚠️  Часть Python-пакетов не установилась. Причина:"
+            # Сначала — строки, по которым видно, ЧТО именно случилось
+            # (нет пакета / таймаут / прокси / SSL / PEP 668). Уведомления
+            # pip об обновлении самого себя в диагностике только мешают.
+            if grep -qiE 'ERROR|timed out|ProxyError|SSLError|externally-managed' "$PIP_LOG" 2>/dev/null; then
+                grep -iE 'ERROR|timed out|ProxyError|SSLError|externally-managed|Retrying' "$PIP_LOG" \
+                    | sort -u | head -n 5 | sed 's/^/    /'
+            else
+                tail -n 8 "$PIP_LOG" 2>/dev/null | sed 's/^/    /'
+            fi
+            echo "    Полный лог: $PIP_LOG"
+            echo "    Если не встал pymupdf — PDF читаются через poppler (см. статус ниже)."
+        fi
+    fi
+fi
 
 # 2. Системный OCR (tesseract) — ОПЦИОНАЛЬНО, best-effort.
 #    Без root обычно недоступно — это нормально: основной OCR-путь — vision.
@@ -52,12 +87,36 @@ check_cmd() { command -v "$1" &> /dev/null && echo "✓ $1" || echo "✗ $1 (н�
 check_py()  { python3 -c "import $1" 2>/dev/null && echo "✓ python: $1" || echo "✗ python: $1 (НЕ установлен)"; }
 
 check_py yaml
-check_py fitz       # pymupdf — нужен extract_text.py
+check_py fitz       # pymupdf — основной движок PDF в extract_text.py
 check_py docx
 check_py openpyxl
+# poppler — запасной движок PDF (F.2): без pymupdf через него идут и извлечение
+# текста (pdftotext), и рендер страниц для vision (pdftoppm).
+check_cmd pdftotext
+check_cmd pdftoppm
 check_cmd tesseract
 check_cmd ocrmypdf
 check_cmd soffice
 
+# F.5: вендоренный русский словарь. Прокидывание TESSDATA_PREFIX зашито только
+# внутри `extract_text.py --spot-check`; прямой вызов tesseract его не увидит,
+# поэтому печатаем готовую строку — в бою 16.07 словарь искали руками.
+VASSAL_TESSDATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tessdata"
+if [ -s "$VASSAL_TESSDATA_DIR/rus.traineddata" ]; then
+    echo "✓ rus.traineddata ($(wc -c < "$VASSAL_TESSDATA_DIR/rus.traineddata") байт)"
+    echo "  для прямых вызовов: export TESSDATA_PREFIX=\"$VASSAL_TESSDATA_DIR\""
+else
+    echo "✗ rus.traineddata (нет или пустой) — tesseract-спот-сверка недоступна, остаётся vision"
+fi
+
 echo ""
-echo "=== Готово. Если tesseract недоступен — это ок: основной OCR-путь — vision. ==="
+if python3 -c "import fitz" 2>/dev/null; then
+    echo "=== Готово. PDF читаются через pymupdf. tesseract не нужен: OCR-путь — vision. ==="
+elif command -v pdftotext &> /dev/null; then
+    echo "⚠️  === pymupdf не установлен — PDF идут через poppler (запасной путь, F.2). ==="
+    echo "    Работает, но качество извлечения ниже: страницы с потерянными глифами"
+    echo "    уходят на vision, пустые не отличаются от сканов. Причина отказа — в логе выше."
+else
+    echo "✗ === Ни pymupdf, ни poppler недоступны — PDF прочитать НЕЧЕМ. ==="
+    echo "    Это блокирует приём документов. Разберите причину по логу выше."
+fi

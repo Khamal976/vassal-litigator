@@ -178,6 +178,24 @@ OCR/vision выполняется **один раз** на содержимое.
 `rus.traineddata` вендорится в репо (`scripts/tessdata/`, `tessdata_fast`, ~3.7 МБ). Это
 **независимое второе чтение** с иными режимами отказа, чем у vision, — в духе verify-before-assert.
 
+**Если запускаешь tesseract сам, а не через `--spot-check` (F.5).** Прокидывание
+`TESSDATA_PREFIX` зашито **только внутри** `extract_text.py --spot-check`. Любой прямой вызов
+(`pytesseract`, `tesseract` из shell) вендоренный словарь **не увидит** и упадёт на «нет русского
+языка» — ровно это и произошло в бою 16.07, где словарь искали вручную. Указывай папку явно:
+
+```bash
+export TESSDATA_PREFIX="${CLAUDE_PLUGIN_ROOT}/scripts/tessdata"
+tesseract page.png stdout -l rus
+```
+```python
+import os, pytesseract
+os.environ["TESSDATA_PREFIX"] = os.path.join(os.environ["CLAUDE_PLUGIN_ROOT"], "scripts", "tessdata")
+text = pytesseract.image_to_string(img, lang="rus")
+```
+
+Копировать словарь в `~/.tessdata` не нужно. Своего `eng.traineddata` в плагине нет — при
+`-l rus+eng` нужен системный `eng`, иначе только `-l rus`.
+
 ## §7. Пер-полевой confidence и качество (F3.5)
 
 Vision-субагент при транскрипции помечает **критичные реквизиты**, в которых не уверен:
