@@ -171,13 +171,21 @@ case:
     qualified_at: null              # Дата квалификации (ГГГГ-ММ-ДД)
 
   # Подсудность — заполняется на этапе legal-review
-  # writes: legal-review
+  # writes: legal-review; confirmed_by_user — дополнительно prepare-hearing (F.9)
   # reads: build-position, prepare-hearing, appeal, cassation
   jurisdiction:
     competent_court: null           # арбитражный | СОЮ | КАС | банкротный
     territorial_basis: null         # общая | договорная | исключительная | альтернативная
     correct: null                   # true | false | null — соответствует ли фактическая подсудность правильной
     prorogation_clause: null        # Текст оговорки о подсудности из договора (или null)
+    # F.9 — статус вывода о компетенции; читается перед первичной подачей (prepare-hearing и др.
+    # document-producing скиллы). Ниже высокой = блок первичной подачи до подтверждения Сюзерена.
+    # См. shared/conventions.md → «Статус вывода о компетенции (F.9)»
+    confidence: null                # высокая | средняя | низкая — та же оценка, что в аудируемом выводе
+    confirmed_by_user: null         # true | false | null — Сюзерен явно подтвердил форум (снимает блок)
+    # F.6 — след шага 0 «специальная норма о компетенции в профильном законе»
+    special_norm_checked: null      # true | false — профильный закон открывали (пустой результат тоже валиден)
+    special_norm: null              # Найденная норма ("п. 12 ст. 20 ФЗ-127") или null, если не найдена
 
   # Досудебный порядок — заполняется на этапе legal-review, не при init-case
   # writes: legal-review
