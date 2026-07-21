@@ -15,8 +15,10 @@ extract_text.py — детерминированная Python-нога OCR-мо�
   - вычисление content_hash для кэша (F3.2; само решение о кэше — агентское);
   - рендер страницы(ц) в PNG для vision через pymupdf (надёжнее системного
     pdftoppm, который у файлового Read падает «unsafe location») + guard обрезки (F3.5);
-  - ОПЦИОНАЛЬНАЯ tesseract спот-сверка ОДНОГО поля по вендоренному rus.traineddata
-    (F3.1, вторая нога) — для независимой сверки критичной цифры (ИНН/сумма/дата).
+  - tesseract спот-сверка критичного поля по вендоренному rus.traineddata (F3.1,
+    вторая нога) — независимое второе чтение цифры (ИНН/сумма/доля/дата) с машинным
+    вердиктом match/mismatch/inconclusive (F.18). Деградирует тихо: нет словаря или
+    бинаря, таймаут → available:false, приём продолжается на результате vision.
 
 Режимы запуска:
     # 1) извлечение (основной режим, вызывается скиллами ingest):
@@ -26,8 +28,11 @@ extract_text.py — детерминированная Python-нога OCR-мо�
     # 2) рендер одной страницы в PNG (для vision-ноги агента):
     python3 extract_text.py --render <file.pdf> --page N [--render-dir <папка>] [--width 1500]
 
-    # 3) tesseract спот-сверка одного поля (кроп → одна строка):
-    python3 extract_text.py --spot-check <crop.png> [--tessdata <путь>]
+    # 3) tesseract спот-сверка критичного поля (второе, независимое чтение):
+    python3 extract_text.py --spot-check <file.pdf> --page N --expect "3390000"
+                            [--region x0,y0,x1,y1]   # доли страницы, если целая — таймаут
+                            [--psm N] [--tessdata <путь>] [--render-dir <папка>]
+    python3 extract_text.py --spot-check <crop.png> --psm 7 --expect "7707083893"
 
 Выход: JSON. Поля контракта — см. shared/ocr.md §3.
 """
@@ -39,6 +44,8 @@ import re
 import errno
 import hashlib
 import subprocess
+import shutil
+import glob
 from pathlib import Path
 
 # --- Параметры по умолчанию -------------------------------------------------
@@ -259,6 +266,173 @@ def _pdf_error(error_class: str, retryable: bool, message: str, pages: int = 0) 
             "warnings": [message]}
 
 
+# --- Движок poppler: fallback, когда нет pymupdf (F.2) ----------------------
+#
+# Зачем. pymupdf был ЕДИНСТВЕННЫМ путём к PDF: без него не работало ни
+# программное извлечение, ни рендер страниц — а значит и vision, потому что
+# vision читает PNG, который рендерил тот же pymupdf. Задокументированный в
+# ocr.md fallback «нет pymupdf → vision» был замкнут сам на себя. В боевых
+# прогонах pymupdf регулярно не вставал (25-МБ колесо, прокси, а до F.1 —
+# ещё и падавший setup.sh), и агент каждый раз вручную уходил на poppler.
+# Здесь этот обход сделан штатным: poppler (pdftotext/pdftoppm/pdfinfo)
+# предустановлен в песочнице Cowork.
+#
+# Граница движка. poppler не отдаёт список изображений страницы, поэтому
+# страницу без текстового слоя нельзя отличить от пустой. Классифицируем её
+# как `scan` (консервативно: лишняя страница уйдёт на vision — это дешевле,
+# чем принять скан за пустую и потерять содержание).
+
+def _poppler_bin(name: str):
+    """Путь к утилите poppler или None."""
+    return shutil.which(name)
+
+
+def poppler_available() -> bool:
+    return bool(_poppler_bin("pdftotext"))
+
+
+def _pdf_page_count_poppler(filepath: str) -> int:
+    """Число страниц через pdfinfo; 0 — если не удалось."""
+    exe = _poppler_bin("pdfinfo")
+    if not exe:
+        return 0
+    try:
+        r = subprocess.run([exe, filepath], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return 0
+    m = re.search(r"^Pages:\s+(\d+)", r.stdout or "", re.M)
+    return int(m.group(1)) if m else 0
+
+
+def _classify_text_only(txt: str) -> str:
+    """Статус страницы по одному тексту (без доступа к изображениям).
+
+    Аналог `_classify_page` для poppler. Два отличия:
+
+    1. `blank` не выделяется — страница без текста считается `scan`
+       (см. «Граница движка» выше).
+    2. Строже порог «нет кириллицы». Базовое правило `_is_garbage` требует
+       ≥30 букв, потому что рассчитано на cp1251-кашу, где мусорных букв
+       сотни. У poppler отказ выглядит иначе: если в PDF нет ToUnicode-карты
+       для подмножества шрифта, глифы **молча выпадают** — остаются цифры и
+       пунктуация, букв мало, и до порога 30 дело не доходит. Проверено на
+       фикстуре: 293 симв. у pymupdf против 107 у poppler с полностью
+       потерянной кириллицей, и страница прошла бы как годный текст.
+       Поэтому на fallback-пути: есть буквы, но кириллицы нет вовсе → на
+       vision. Ложное срабатывание (целиком латинская страница) стоит одного
+       прохода vision — это дешевле потери текста, и та же логика уже принята
+       в `_is_garbage`.
+    """
+    stripped = (txt or "").strip()
+    if len(stripped) < 10:
+        return "scan"
+    diag = _text_diagnostics(txt)
+    if _is_garbage(diag):
+        return "garbage"
+    alpha = diag.get("alpha_count", 0)
+    # (а) глифы выпали почти полностью — остались цифры, пробелы и пунктуация.
+    #     Ровно этот профиль дала фикстура: 107 симв. текста при ОДНОЙ букве.
+    if len(stripped) >= 40 and alpha < 5:
+        return "garbage"
+    # (б) буквы есть, но кириллицы нет вовсе — частичное выпадение глифов.
+    if alpha >= 5 and diag.get("cyr_ratio", 1.0) == 0.0:
+        return "garbage"
+    return "text"
+
+
+def _pdf_pages_poppler(filepath: str):
+    """(pages, statuses, text_parts) через pdftotext. Бросает исключение при сбое.
+
+    Один вызов на документ: pdftotext разделяет страницы переводом формы
+    (\\f), поэтому и число страниц, и постраничный текст берутся из одной
+    выдачи. Это заодно снимает зависимость от `pdfinfo` — в некоторых сборках
+    poppler (напр. в составе Git for Windows) есть pdftotext, но нет pdfinfo.
+    """
+    exe = _poppler_bin("pdftotext")
+    if not exe:
+        raise RuntimeError("poppler (pdftotext) недоступен")
+
+    # -layout сохраняет колоночную вёрстку (важно для таблиц и шапок).
+    r = subprocess.run([exe, "-layout", filepath, "-"],
+                       capture_output=True, timeout=300)
+    if r.returncode != 0:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(f"pdftotext rc={r.returncode}: {err[:200]}")
+
+    raw = (r.stdout or b"").decode("utf-8", "replace")
+    chunks = raw.split("\f")
+    if chunks and not chunks[-1].strip():
+        chunks.pop()            # pdftotext ставит \f и после последней страницы
+    if not chunks:
+        raise RuntimeError("pdftotext вернул пустую выдачу")
+
+    # Сверка с pdfinfo, если он есть: расхождение — сигнал, что разбор по \f
+    # разошёлся с реальной пагинацией (не блок, флаг в предупреждениях выше).
+    declared = _pdf_page_count_poppler(filepath)
+    if declared and declared != len(chunks):
+        chunks = chunks[:declared] + [""] * max(0, declared - len(chunks))
+
+    statuses, text_parts = [], []
+    for i, txt in enumerate(chunks, start=1):
+        status = _classify_text_only(txt)
+        statuses.append(status)
+        text_parts.append(txt if status == "text" else f"[[VISION_PAGE {i}: {status}]]")
+    return len(chunks), statuses, text_parts
+
+
+def _render_page_poppler(filepath: str, page_index0: int, render_dir: str, width: int) -> dict:
+    """Рендер одной страницы в PNG через pdftoppm.
+
+    Плавающий паддинг имени. pdftoppm дописывает номер страницы с ведущими
+    нулями по разрядности ОБЩЕГО числа страниц: `p-1.png` для 9-страничного
+    документа и `p-01.png` для 10-страничного. Боевой прогон 16.07 на этом
+    молча получал 0 символов, потому что искал файл по угаданному имени.
+    Поэтому рендерим в отдельный подкаталог и забираем то, что реально
+    появилось, а не то, что ожидали.
+    """
+    exe = _poppler_bin("pdftoppm")
+    if not exe:
+        return {"path": None, "cropped": False,
+                "warnings": ["ни pymupdf, ни poppler (pdftoppm) недоступны"]}
+
+    n = page_index0 + 1
+    out_dir = os.path.join(render_dir, f"_p{n}")
+    os.makedirs(out_dir, exist_ok=True)
+    for stale in glob.glob(os.path.join(out_dir, "*.png")):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+    prefix = os.path.join(out_dir, "page")
+    try:
+        subprocess.run([exe, "-png", "-scale-to-x", str(width), "-scale-to-y", "-1",
+                        "-f", str(n), "-l", str(n), filepath, prefix],
+                       capture_output=True, timeout=180, check=True)
+    except Exception as e:
+        ec, rt, msg = classify_open_error(filepath, e)
+        return {"path": None, "cropped": False, "error_class": ec, "retryable": rt,
+                "warnings": [f"Рендер через pdftoppm не удался: {msg}"]}
+
+    produced = sorted(glob.glob(os.path.join(out_dir, "page*.png")))
+    if not produced:
+        return {"path": None, "cropped": False,
+                "warnings": [f"pdftoppm не создал PNG для стр. {n}"]}
+
+    # Имя, ожидаемое остальным пайплайном (как у fitz-ветки).
+    out = os.path.join(render_dir, f"{Path(filepath).stem}_p{n}.png")
+    shutil.move(produced[0], out)
+    try:
+        os.rmdir(out_dir)
+    except OSError:
+        pass
+    # Guard обрезки (F3.5) здесь недоступен: без геометрии страницы аспект
+    # не с чем сравнивать. Помечаем явно, чтобы «не проверено» не читалось
+    # как «проверено и ок».
+    return {"path": out, "cropped": False, "render_engine": "poppler",
+            "warnings": ["рендер через poppler: guard обрезки (F3.5) не применялся"]}
+
+
 # --- Извлечение из PDF ------------------------------------------------------
 
 def extract_pdf(filepath: str,
@@ -269,41 +443,56 @@ def extract_pdf(filepath: str,
     Vision — основной путь для скан/мусорных страниц (агентская сторона, см. shared/ocr.md).
     Здесь только директива: какие страницы и почему.
     """
+    engine_warnings = []
     try:
         import fitz  # pymupdf
+        engine = "pymupdf"
     except ImportError:
-        return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-                "needs_vision": False, "vision_pages": [], "vision_reason": None,
-                "structural_recommended": False,
-                "warnings": ["pymupdf не установлен"]}
+        # F.2: не отказ, а переход на poppler (предустановлен в песочнице Cowork).
+        if not poppler_available():
+            return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+                    "needs_vision": False, "vision_pages": [], "vision_reason": None,
+                    "structural_recommended": False,
+                    "warnings": ["ни pymupdf, ни poppler (pdftotext) не установлены — PDF не прочитан"]}
+        engine = "poppler"
+        engine_warnings.append(
+            "pymupdf недоступен — извлечение через poppler (pdftotext); "
+            "пустые страницы классифицируются как скан и уходят на vision")
 
-    try:
-        doc = fitz.open(filepath)
-    except Exception as e:
-        # E.14 а/б: различаем «не материализован (OneDrive) → ретрай» и «реально битый → ветка битого».
-        ec, rt, msg = classify_open_error(filepath, e)
-        return _pdf_error(ec, rt, msg)
+    if engine == "poppler":
+        try:
+            pages, statuses, text_parts = _pdf_pages_poppler(filepath)
+        except Exception as e:
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg)
+    else:
+        try:
+            doc = fitz.open(filepath)
+        except Exception as e:
+            # E.14 а/б: различаем «не материализован (OneDrive) → ретрай» и «реально битый → ветка битого».
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg)
 
-    pages = len(doc)
-    statuses = []
-    text_parts = []      # текст для 'text'-страниц; плейсхолдер для остальных
-    try:
-        for i, page in enumerate(doc):
-            status = _classify_page(page)
-            statuses.append(status)
-            if status == "text":
-                text_parts.append(page.get_text())
-            elif status == "blank":
-                text_parts.append("")
-            else:  # scan / garbage — отдаётся vision
-                text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
-    except Exception as e:
-        # Файл «открылся, но развалился» при чтении страниц — как правило дегидратация
-        # cloud-only на маунте (E.14а): не падаем трейсбеком, а классифицируем.
+        pages = len(doc)
+        statuses = []
+        text_parts = []      # текст для 'text'-страниц; плейсхолдер для остальных
+        try:
+            for i, page in enumerate(doc):
+                status = _classify_page(page)
+                statuses.append(status)
+                if status == "text":
+                    text_parts.append(page.get_text())
+                elif status == "blank":
+                    text_parts.append("")
+                else:  # scan / garbage — отдаётся vision
+                    text_parts.append(f"[[VISION_PAGE {i + 1}: {status}]]")
+        except Exception as e:
+            # Файл «открылся, но развалился» при чтении страниц — как правило дегидратация
+            # cloud-only на маунте (E.14а): не падаем трейсбеком, а классифицируем.
+            doc.close()
+            ec, rt, msg = classify_open_error(filepath, e)
+            return _pdf_error(ec, rt, msg, pages)
         doc.close()
-        ec, rt, msg = classify_open_error(filepath, e)
-        return _pdf_error(ec, rt, msg, pages)
-    doc.close()
 
     # страницы под vision (1-based для человека/агента)
     vision_idx = [i + 1 for i, s in enumerate(statuses) if s in ("scan", "garbage")]
@@ -343,7 +532,7 @@ def extract_pdf(filepath: str,
     composite = _detect_composite(text_parts, statuses) if pages > 1 else {
         "composite_suspected": False, "composite_reasons": []}
 
-    warnings = []
+    warnings = list(engine_warnings)   # F.2: чем читали PDF, если не pymupdf
     if has_garbage:
         warnings.append("Обнаружен мусорный текстовый слой — страницы отправлены на vision (F3.3)")
     if structural_recommended:
@@ -457,7 +646,9 @@ def render_page_to_png(filepath: str, page_index0: int, render_dir: str,
     try:
         import fitz
     except ImportError:
-        return {"path": None, "cropped": False, "warnings": ["pymupdf не установлен"]}
+        # F.2: рендер — вторая нога, которая раньше отваливалась вместе с pymupdf
+        # и уносила с собой vision (ему нечего было читать).
+        return _render_page_poppler(filepath, page_index0, render_dir, width)
 
     try:
         doc = fitz.open(filepath)
@@ -493,7 +684,20 @@ def render_page_to_png(filepath: str, page_index0: int, render_dir: str,
                 "warnings": [f"Рендер не удался: {msg}"]}
 
 
-# --- Tesseract спот-сверка одного поля (F3.1, опционально, вариант B) --------
+# --- Tesseract спот-сверка критичного поля (F3.1; оживлена в F.18) -----------
+#
+# До F.18 функция была достижима только из shell вручную: вход — готовый КРОП поля,
+# которого вызывающему негде было взять (геометрию поля vision не отдаёт), а сравнение
+# «прочитано агентом vs прочитано движком» оставалось на глаз той же модели, что и
+# транскрибировала. Поэтому здесь появились две вещи: (1) вход «PDF + номер страницы»
+# (кроп — необязательное сужение, в долях страницы), (2) машинный троичный вердикт
+# по --expect. Смысл ноги — второе чтение с ДРУГИМИ режимами отказа, чем у vision.
+
+_SPOT_TIMEOUT_CROP = 30              # кроп одной строки
+_SPOT_TIMEOUT_PAGE = 120             # целая страница при ~1500 px, с запасом
+_SPACE_CHARS = "     ⁠"
+_NUM_TOKEN_RE = re.compile(r"\d[\d" + _SPACE_CHARS + r"\s.,]*\d|\d")
+
 
 def find_tessdata() -> str:
     """Путь к вендоренным tessdata: $VASSAL_TESSDATA или scripts/tessdata/."""
@@ -506,30 +710,168 @@ def find_tessdata() -> str:
     return ""
 
 
-def spot_check_field(image_path: str, tessdata_dir: str = "") -> dict:
-    """Tesseract по КРОПУ одного поля (--psm 7, одна строка), независимое чтение.
+def _num_key(value) -> str:
+    """Ключ сравнения числового реквизита: цифры + значащая дробная часть.
 
-    Только для одиночного критичного реквизита (цифра в ИНН/сумме/дате), где vision
-    не уверен. На целую страницу не запускать — упирается в таймаут.
+    «3 390 000,00» → «3390000»; «12.03.2026» → «12032026»; «15,5» → «15.5».
+    Ведущие нули НЕ срезаются (ИНН регионов 01–09 начинается с нуля). Нечисловое → "".
     """
+    t = re.sub(r"[" + _SPACE_CHARS + r"\s]+", "", str(value or ""))
+    if not t or not re.fullmatch(r"[\d.,]+", t):
+        return ""
+    m = re.fullmatch(r"(.*?)([.,])(\d{1,2})$", t)     # последний разделитель = десятичный
+    intpart, frac = (m.group(1), m.group(3)) if m else (t, "")
+    intpart = re.sub(r"[.,]", "", intpart)            # остальные — разряды тысяч
+    if not intpart.isdigit():
+        return ""
+    frac = frac.rstrip("0")
+    return intpart + ("." + frac if frac else "")
+
+
+def _text_key(value) -> str:
+    """Ключ сравнения нечислового реквизита: нижний регистр, ё→е, только буквы/цифры."""
+    return re.sub(r"[^0-9a-zа-я]+", "", str(value or "").lower().replace("ё", "е"))
+
+
+def _spot_is_blind(ocr_text: str) -> bool:
+    """Движок сам ничего внятного не прочитал (пусто/каша) → вердикт inconclusive.
+
+    Считаем содержательными буквы и цифры: на кропе одного реквизита букв может не
+    быть вовсе («3 390 000,00»), и объявлять такое чтение слепым нельзя — иначе
+    расхождение именно там, где сверка точнее всего, превратится в inconclusive.
+    Порог `_is_garbage` рассчитан на текстовый слой в сотни символов, поэтому один
+    он тут не работает: страница, с которой tesseract снял только пунктуацию,
+    его не срабатывает и проходила бы как «прочитанная».
+    """
+    t = (ocr_text or "").strip()
+    letters = sum(1 for ch in t if ch.isalpha())
+    digits = sum(1 for ch in t if ch.isdigit())
+    if letters + digits < 2:
+        return True
+    return _is_garbage(_text_diagnostics(t))
+
+
+def compare_field(expected, ocr_text: str) -> dict:
+    """Машинная сверка «прочитано агентом vs прочитано tesseract» (F.18).
+
+    Сверяет ПРОГРАММА, а не модель — иначе петля самооценки просто удлиняется.
+    Вердикт троичный: `inconclusive` (движок ослеп на этой странице) — НЕ повод
+    поднимать расхождение, иначе слепой tesseract зашумит флагами каждый документ.
+    """
+    numeric_key = _num_key(expected)
+    engine_numbers = []
+    if numeric_key:
+        found = {k for k in (_num_key(tok) for tok in _NUM_TOKEN_RE.findall(ocr_text or "")) if k}
+        matched = numeric_key in found
+        engine_numbers = sorted(found)[:12]
+    else:
+        key = _text_key(expected)
+        matched = bool(key) and key in _text_key(ocr_text)
+    if matched:
+        verdict = "match"
+    elif _spot_is_blind(ocr_text):
+        verdict = "inconclusive"
+    else:
+        verdict = "mismatch"
+    return {"expected": str(expected), "verdict": verdict,
+            "numeric": bool(numeric_key), "engine_numbers": engine_numbers}
+
+
+def _render_for_spot(pdf_path: str, page_index0: int, render_dir: str, region=None) -> dict:
+    """PNG страницы (или её области) под спот-сверку. region — доли страницы 0..1."""
+    if not region:
+        res = render_page_to_png(pdf_path, page_index0, render_dir, DEFAULT_RENDER_WIDTH)
+        res["regioned"] = False
+        return res
+    try:
+        import fitz
+    except ImportError:
+        res = render_page_to_png(pdf_path, page_index0, render_dir, DEFAULT_RENDER_WIDTH)
+        res.setdefault("warnings", []).append(
+            "region требует pymupdf — отрендерена страница целиком (poppler кроп не умеет)")
+        res["regioned"] = False
+        return res
+    try:
+        doc = fitz.open(pdf_path)
+        if page_index0 < 0 or page_index0 >= len(doc):
+            n = len(doc)
+            doc.close()
+            return {"path": None, "regioned": False,
+                    "warnings": [f"Страница {page_index0 + 1} вне диапазона (всего {n})"]}
+        pg = doc[page_index0]
+        r = pg.rect
+        x0, y0, x1, y1 = region
+        clip = fitz.Rect(r.x0 + x0 * r.width, r.y0 + y0 * r.height,
+                         r.x0 + x1 * r.width, r.y0 + y1 * r.height)
+        # кроп мельче страницы — поднимаем масштаб, иначе мелкая цифра не читается
+        zoom = max(1.0, min(DEFAULT_RENDER_WIDTH / max(clip.width, 1.0), 8.0))
+        pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+        os.makedirs(render_dir, exist_ok=True)
+        out = os.path.join(render_dir, f"{Path(pdf_path).stem}_p{page_index0 + 1}_spot.png")
+        pix.save(out)
+        doc.close()
+        return {"path": out, "regioned": True, "width": pix.width, "height": pix.height,
+                "warnings": []}
+    except Exception as e:
+        ec, rt, msg = classify_open_error(pdf_path, e)
+        return {"path": None, "regioned": False, "error_class": ec, "retryable": rt,
+                "warnings": [f"Рендер области не удался: {msg}"]}
+
+
+def spot_check_field(target: str, page: int = 1, region=None, expect="",
+                     psm: int = 0, tessdata_dir: str = "", render_dir: str = "") -> dict:
+    """Независимое второе чтение критичного поля движком tesseract (не нейросетью).
+
+    Вход — PDF + номер страницы (1-based; рендерим сами) ИЛИ готовый PNG/JPG.
+    `region` (x0,y0,x1,y1 в долях страницы) сужает область — запасной путь, когда
+    целая страница упирается в таймаут; кроп работает только на pymupdf.
+    `expect` — то, что прочитал агент: сверка машинная (см. compare_field).
+
+    Не бросает исключений и НЕ блокирует приём: нет словаря / бинаря / таймаут →
+    available:false, вызывающий продолжает с результатом vision (shared/ocr.md §9).
+    """
+    warnings = []
     tessdata_dir = tessdata_dir or find_tessdata()
     if not tessdata_dir:
-        return {"text": "", "available": False,
+        return {"available": False, "text": "", "verdict": None,
                 "warnings": ["rus.traineddata не найден (scripts/tessdata/ или $VASSAL_TESSDATA) — спот-сверка пропущена"]}
+
+    image_path, full_page = target, True
+    if Path(target).suffix.lower() == ".pdf":
+        rd = render_dir or os.path.join(os.getcwd(), "outputs", "spot")
+        rendered = _render_for_spot(target, max(1, page) - 1, rd, region)
+        warnings.extend(rendered.get("warnings", []))
+        if not rendered.get("path"):
+            warnings.append("рендер страницы не удался — спот-сверка пропущена")
+            return {"available": False, "text": "", "verdict": None, "warnings": warnings}
+        image_path = rendered["path"]
+        full_page = not rendered.get("regioned")
+    elif region:
+        warnings.append("region задан для готового изображения — игнорируется (кроп делается при рендере из PDF)")
+
+    psm = psm or (3 if full_page else 7)              # 3 — авторазметка страницы, 7 — одна строка
+    timeout = _SPOT_TIMEOUT_PAGE if full_page else _SPOT_TIMEOUT_CROP
     env = dict(os.environ)
-    env["TESSDATA_PREFIX"] = tessdata_dir
+    env["TESSDATA_PREFIX"] = tessdata_dir             # прямой вызов словарь не увидит (F.5)
     try:
         result = subprocess.run(
-            ["tesseract", image_path, "stdout", "-l", "rus", "--psm", "7"],
-            capture_output=True, text=True, timeout=30, env=env
+            ["tesseract", image_path, "stdout", "-l", "rus", "--psm", str(psm)],
+            capture_output=True, text=True, timeout=timeout, env=env
         )
-        return {"text": result.stdout.strip(), "available": True, "warnings": []}
     except FileNotFoundError:
-        return {"text": "", "available": False,
-                "warnings": ["бинарь tesseract не найден — спот-сверка пропущена"]}
+        warnings.append("бинарь tesseract не найден — спот-сверка пропущена")
+        return {"available": False, "text": "", "verdict": None, "warnings": warnings}
     except subprocess.TimeoutExpired:
-        return {"text": "", "available": False,
-                "warnings": ["tesseract таймаут на кропе — спот-сверка пропущена"]}
+        warnings.append(f"tesseract таймаут {timeout} c — спот-сверка пропущена; "
+                        f"сузьте область через --region или продолжайте без неё")
+        return {"available": False, "text": "", "verdict": None, "warnings": warnings}
+
+    text = (result.stdout or "").strip()
+    out = {"available": True, "text": text, "psm": psm, "image": image_path,
+           "verdict": None, "warnings": warnings}
+    if str(expect or "").strip():
+        out.update(compare_field(expect, text))
+    return out
 
 
 # --- Диспетчер --------------------------------------------------------------
@@ -581,6 +923,17 @@ def _get_opt(argv, name, default=None):
     return default
 
 
+def _parse_region(raw: str):
+    """«x0,y0,x1,y1» в долях страницы (0..1) → кортеж. Мусор → ValueError."""
+    vals = [float(p) for p in str(raw).replace(" ", "").split(",")]
+    if len(vals) != 4:
+        raise ValueError("нужно ровно 4 числа")
+    x0, y0, x1, y1 = vals
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+        raise ValueError("координаты вне 0..1 или x0≥x1 / y0≥y1")
+    return (x0, y0, x1, y1)
+
+
 def main():
     # Печатаем UTF-8 независимо от консоли ОС (Windows cp1251 иначе рвёт кириллицу/BOM;
     # в Cowork/Linux безвредно — там stdout уже UTF-8).
@@ -594,17 +947,33 @@ def main():
     if not argv:
         print("Использование: python3 extract_text.py <файл> [--output-dir DIR] [--render-dir DIR]")
         print("               python3 extract_text.py --render <pdf> --page N [--render-dir DIR] [--width W]")
-        print("               python3 extract_text.py --spot-check <crop.png> [--tessdata DIR]")
+        print("               python3 extract_text.py --spot-check <pdf|png> [--page N] [--expect ЗНАЧЕНИЕ]")
+        print("                                       [--region x0,y0,x1,y1] [--psm N] [--tessdata DIR]")
         sys.exit(1)
 
-    # Режим 3: спот-сверка поля
+    # Режим 3: спот-сверка критичного поля вторым движком (F.18)
     if "--spot-check" in argv:
-        img = _get_opt(argv, "--spot-check")
-        if not img or not os.path.exists(img):
-            print(json.dumps({"error": f"Изображение не найдено: {img}"}, ensure_ascii=False))
+        target = _get_opt(argv, "--spot-check")
+        if not target or not os.path.exists(target):
+            print(json.dumps({"error": f"Файл не найден: {target}"}, ensure_ascii=False))
             sys.exit(1)
-        print(json.dumps(spot_check_field(img, _get_opt(argv, "--tessdata", "")),
-                         ensure_ascii=False, indent=2))
+        region = None
+        if "--region" in argv:
+            try:
+                region = _parse_region(_get_opt(argv, "--region", ""))
+            except (ValueError, AttributeError) as e:
+                print(json.dumps({"error": f"--region: {e}; формат «x0,y0,x1,y1» в долях страницы"},
+                                 ensure_ascii=False))
+                sys.exit(1)
+        print(json.dumps(spot_check_field(
+            target,
+            page=int(_get_opt(argv, "--page", "1")),
+            region=region,
+            expect=_get_opt(argv, "--expect", "") or "",
+            psm=int(_get_opt(argv, "--psm", "0")),
+            tessdata_dir=_get_opt(argv, "--tessdata", "") or "",
+            render_dir=_get_opt(argv, "--render-dir", "") or "",
+        ), ensure_ascii=False, indent=2))
         return
 
     # Режим 2: рендер одной страницы

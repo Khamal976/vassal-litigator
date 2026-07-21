@@ -38,6 +38,18 @@ documents:
                                           # обрезанный рендер / low-conf критичное поле (shared/ocr.md §7)
     pages: null                           # Количество страниц (число)
 
+    # Решающий документ — вторая, независимая голова по критичным полям (F.18)
+    decisive: false                       # true → критичные поля читаются дважды (shared/ocr.md §3.2)
+    decisive_reason: null                 # null | "class" (класс из списка) | "manual" (пометка Сюзерена)
+    verified_fields: []                   # поля, РЕАЛЬНО прошедшие второе чтение, напр.
+                                          #   - field: "доля участника"
+                                          #     verdict: match | mismatch | inconclusive
+                                          #     second_read: "opus"        # чем читали вторым
+                                          #     engine: match | mismatch | inconclusive | unavailable
+                                          # Пустой список при decisive: true = проверка НЕ выполнялась
+                                          # (не «выполнена и чисто»). Аддитивно: записи без этих
+                                          # полей трактуются как decisive: false.
+
     source: "client"                      # client | opponent | court | public | ally | own-work
                                           # ally — процессуальный союзник на нашей стороне (соответчик /
                                           #   соистец / третье лицо; напр. отзыв АУ при защите СРО).

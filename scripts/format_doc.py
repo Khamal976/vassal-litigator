@@ -7,6 +7,13 @@ format_doc.py — детерминированная нога рендера п�
 (см. skills/format-doc/references/style-spec.md). Headless, без Word-аддина,
 на python-docx. Тот же вход -> тот же выход (идемпотентно: метаданные фиксированы).
 
+⚠️ Идемпотентность — на уровне СОДЕРЖИМОГО, не байтов файла. .docx это zip, и
+python-docx проставляет в записи архива текущее время, поэтому sha256 двух
+прогонов на одном входе НЕ совпадёт. Проверено: все части архива (document.xml,
+styles.xml, numbering.xml …) побайтово идентичны, различаются только метки
+времени zip-записей. Сверять идемпотентность нужно по содержимому частей архива,
+а не по хэшу файла (F.29).
+
 Использование:
     python3 format_doc.py <in.md> <out.docx> --type <тип> [--case case.yaml]
 
@@ -279,8 +286,84 @@ class Numbering:
 # --------------------------------------------------------------------------- #
 # Парсер .md по якорному контракту -> модель блоков
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Инлайновая разметка и санитизация (F.4)
+# --------------------------------------------------------------------------- #
+# Скрипт разбирал markdown только поблочно (заголовки, списки, таблицы), а
+# инлайновую разметку не трогал вовсе — `**жирный**` уезжал в .docx литеральными
+# звёздочками (боевой прогон 16.07: звёздочки в шапке, подзаголовках §2.* и
+# «Приложениях»; их вычищали из .md вручную перед каждой печатью).
+RE_BOLD_INLINE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
+RE_LINK_INLINE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+RE_CODE_INLINE = re.compile(r"`([^`]+)`")
+# Одиночная `*` — курсив. Границы обязательны: открывающая звёздочка стоит в
+# начале или после пробела/открывающей скобки/кавычки, закрывающая — в конце или
+# перед пробелом/знаком препинания. Без этого правила выражение «2*3 и 5*7»
+# читалось как курсив и превращалось в «23 и 57» — тихая порча суммы в
+# процессуальном документе (поймано тестом). Внутри переносов строк нет.
+RE_ITALIC_INLINE = re.compile(
+    r"(^|[\s(\[«\"'])\*(?!\s)([^*\n]+?)(?<!\s)\*(?=$|[\s.,;:!?)\]»\"'])")
+
+
+def _drop_italic(s):
+    return RE_ITALIC_INLINE.sub(r"\1\2", s)
+
+
+def _sanitize_control(text):
+    """Убрать управляющие символы, недопустимые в OOXML.
+
+    Боевой случай 16.07: инструмент правки дописал 28 байт `\\x00` в хвост .md,
+    и рендер падал с XML-ошибкой. Табуляция и перевод строки — значащие
+    (табуляция разделяет роль и ФИО в блоке подписи), остальное ниже 0x20 режем.
+    """
+    return "".join(ch for ch in (text or "") if ch in "\t\n" or ord(ch) >= 32)
+
+
+def _strip_inline(s):
+    """Снять инлайновую разметку, оставив только текст.
+
+    Для блоков, у которых начертание задаёт стиль документа (заголовки,
+    «ПРОШУ:», подписи): автору незачем спорить со `style-spec`.
+    """
+    s = RE_LINK_INLINE.sub(r"\1", s or "")
+    s = RE_CODE_INLINE.sub(r"\1", s)
+    s = RE_BOLD_INLINE.sub(lambda m: m.group(1) or m.group(2) or "", s)
+    s = _drop_italic(s)
+    return s
+
+
+def _inline_segments(s):
+    """[(текст, жирный)] — `**жирный**` сохраняется, прочая разметка снимается.
+
+    Для текста тела, где выделение — осознанный выбор юриста.
+    """
+    s = RE_LINK_INLINE.sub(r"\1", s or "")
+    s = RE_CODE_INLINE.sub(r"\1", s)
+    out, pos = [], 0
+    for m in RE_BOLD_INLINE.finditer(s):
+        if m.start() > pos:
+            out.append((_drop_italic(s[pos:m.start()]), False))
+        out.append((_drop_italic(m.group(1) or m.group(2) or ""), True))
+        pos = m.end()
+    if pos < len(s):
+        out.append((_drop_italic(s[pos:]), False))
+    return [(t, b) for t, b in out if t]
+
+
+def _emit_inline(p, text, size, name=FONT, no_spacing=False):
+    """Добавить в абзац раны с учётом `**жирного**`."""
+    segs = _inline_segments(text) or [(_strip_inline(text), False)]
+    for t, b in segs:
+        r = p.add_run(t)
+        _set_font(r, size, bold=b, name=name)
+        if no_spacing:
+            _no_char_spacing(r)
+
+
 def parse_md(text):
     """Возвращает (header_lines, blocks). blocks — список dict со ключом 'type'."""
+    # F.4: управляющие символы режем до разбора — иначе `\x00` доедет до OOXML.
+    text = _sanitize_control(text)
     raw = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     # 1) шапка = всё до первого H1
     h1_idx = next((i for i, l in enumerate(raw) if RE_H1.match(l)), None)
@@ -431,9 +514,8 @@ def _add_header_para(doc, lines, space_after=0):
     for k, part in enumerate(lines):
         if k:
             p.add_run().add_break(WD_BREAK.LINE)
-        run = p.add_run(part.strip())
-        _set_font(run, SZ_BODY)
-        _no_char_spacing(run)
+        # F.4: шапка — первое место, где в бою вылезли литеральные звёздочки.
+        _emit_inline(p, part.strip(), SZ_BODY, no_spacing=True)
     return p
 
 
@@ -491,26 +573,26 @@ def render(header_lines, blocks, out_path, case=None, doc_type=None):
         if t == "title":
             p = doc.add_paragraph()
             _para(p, before=24, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_H1, bold=True)
 
         elif t == "date":
             p = doc.add_paragraph()
             _para(p, before=0, after=8)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_BODY)
 
         elif t == "minihead":
             p = doc.add_paragraph()
             _para(p, before=8, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_MINIHEAD, bold=True)
 
         elif t == "h2":
             p = doc.add_paragraph()
             _para(p, before=16, after=8, keep_with_next=True)
             _para_border(p, ["bottom"])
-            r = p.add_run(b["text"])   # номер проставит автонумерация (см. ниже)
+            r = p.add_run(_strip_inline(b["text"]))   # номер проставит автонумерация (см. ниже)
             _set_font(r, SZ_H2, bold=True)
             # привязка Heading2-довода к сквозному списку доводов (автонумерация 1, 2, 3…)
             _apply_h2_number(doc, p, numbering)
@@ -518,25 +600,25 @@ def render(header_lines, blocks, out_path, case=None, doc_type=None):
         elif t == "subhead":
             p = doc.add_paragraph()
             _para(p, before=8, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_SUBHEAD, bold=True)
 
         elif t == "prosba_head":
             p = doc.add_paragraph()
             _para(p, before=16, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_PROSBA, bold=True)
 
         elif t == "prosba_tail":
             p = doc.add_paragraph()
             _para(p, before=8, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_BODY)
 
         elif t == "appendix_head":
             p = doc.add_paragraph()
             _para(p, before=8, after=0)
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_BODY, bold=True)
 
         elif t == "para":
@@ -548,7 +630,7 @@ def render(header_lines, blocks, out_path, case=None, doc_type=None):
             p = doc.add_paragraph()
             _para(p, before=0, after=0, left_indent=QUOTE_INDENT)  # правка 7: блок без интервала снизу
             _para_border(p, ["left"])
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_BODY)
 
         elif t == "source":
@@ -556,7 +638,7 @@ def render(header_lines, blocks, out_path, case=None, doc_type=None):
             _para(p, before=0, after=0, align=WD_ALIGN_PARAGRAPH.RIGHT,
                   left_indent=QUOTE_INDENT)  # правка 7: интервал даст следующий текст (spaceBefore)
             _para_border(p, ["left"])
-            r = p.add_run(b["text"])
+            r = p.add_run(_strip_inline(b["text"]))
             _set_font(r, SZ_BODY)
 
         elif t == "numlist":
@@ -574,7 +656,8 @@ def render(header_lines, blocks, out_path, case=None, doc_type=None):
             # правка 8: ФИО к правому краю, широкий зазор между ролью и ФИО под подпись
             content_w = sec.page_width - sec.left_margin - sec.right_margin
             p.paragraph_format.tab_stops.add_tab_stop(content_w, WD_TAB_ALIGNMENT.RIGHT)
-            r = p.add_run(b["role"] + ("\t" + b["name"] if b["name"] else ""))
+            r = p.add_run(_strip_inline(b["role"])
+                          + ("\t" + _strip_inline(b["name"]) if b["name"] else ""))
             _set_font(r, SZ_BODY, bold=True)
 
     _fix_after_table_spacing(doc)
@@ -607,8 +690,7 @@ def _emit_list(doc, numbering, items, is_bullet):
             _para(p, before=0, after=(12 if last else 0),
                   left_indent=LIST_LEFT, hanging=LIST_HANG)
             Numbering.apply(p, num_id)
-            r = p.add_run(it)
-            _set_font(r, SZ_BODY)
+            _emit_inline(p, it, SZ_BODY)
     else:
         # деградация: текстовые маркеры (нумерация недоступна)
         for k, it in enumerate(items):
@@ -616,8 +698,9 @@ def _emit_list(doc, numbering, items, is_bullet):
             last = (k == len(items) - 1)
             _para(p, before=0, after=(12 if last else 0), left_indent=LIST_LEFT)
             prefix = "— " if is_bullet else "%d. " % (k + 1)
-            r = p.add_run(prefix + it)
+            r = p.add_run(prefix)
             _set_font(r, SZ_BODY)
+            _emit_inline(p, it, SZ_BODY)
 
 
 def _emit_table(doc, rows):
@@ -644,8 +727,13 @@ def _emit_table(doc, rows):
             # выравнивание: числовые -> Right
             if _is_numeric(txt) and not is_header:
                 para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            r = para.add_run(txt)
-            _set_font(r, SZ_TABLE, bold=(is_header or is_total), name=TABLE_FONT)
+            # F.4: шапка и итоговая строка жирные по стилю — там разметку снимаем;
+            # в обычной ячейке `**жирный**` автора сохраняем.
+            if is_header or is_total:
+                r = para.add_run(_strip_inline(txt))
+                _set_font(r, SZ_TABLE, bold=True, name=TABLE_FONT)
+            else:
+                _emit_inline(para, txt, SZ_TABLE, name=TABLE_FONT)
             if is_header:
                 _cell_shade(cell, HL_FILL)
             elif is_total:
@@ -653,12 +741,19 @@ def _emit_table(doc, rows):
 
 
 def _emit_text_with_highlight(p, text, in_argument):
-    """Обычный абзац; внутри абзаца довода выделяем одну ключевую фразу серым."""
-    r_all = None
+    """Обычный абзац; внутри абзаца довода выделяем одну ключевую фразу серым.
+
+    F.4: маркеры разметки снимаются в любом случае. Когда фраза под highlight
+    найдена — абзац идёт плоским текстом (заливка и жирный в одном ране спорят
+    друг с другом, а highlight здесь важнее); иначе `**жирный**` сохраняется.
+    Ключевая фраза ищется по очищенному тексту, иначе `**` внутри неё сдвинули
+    бы границы поиска.
+    """
+    plain = _strip_inline(text)
     if in_argument:
-        phrase = _key_phrase(text)
+        phrase = _key_phrase(plain)
         if phrase:
-            before, _, after = text.partition(phrase)
+            before, _, after = plain.partition(phrase)
             if before:
                 _set_font(p.add_run(before), SZ_BODY)
             r = p.add_run(phrase)
@@ -667,8 +762,7 @@ def _emit_text_with_highlight(p, text, in_argument):
             if after:
                 _set_font(p.add_run(after), SZ_BODY)
             return
-    r_all = p.add_run(text)
-    _set_font(r_all, SZ_BODY)
+    _emit_inline(p, text, SZ_BODY)
 
 
 # --------------------------------------------------------------------------- #

@@ -99,6 +99,56 @@ foreach ($entry in $include) {
     }
 }
 
+# Normalize line endings in shell scripts (OPEN-ITEMS F.1).
+#
+# The plugin runs in the Cowork Linux sandbox but is built on Windows, where
+# `core.autocrlf=true` checks out CRLF. Robocopy copies bytes verbatim, so
+# without this step Windows line endings ship in the artifact. For bash that
+# is fatal: `\` + CR + LF is NOT a line continuation -- setup.sh died with a
+# syntax error on line 18, the error was swallowed by `2>/dev/null`, pymupdf
+# never installed, and pymupdf is the only path to PDF (including rendering
+# pages for vision). `.gitattributes` fixes this on the git side; this is the
+# belt-and-braces guard for a checkout with different autocrlf settings.
+#
+# The extension whitelist is deliberately narrow: only what bash executes.
+# Operates on raw bytes with no decoding -- a byte-wise CRLF replacement
+# corrupts binary assets (scripts/tessdata/rus.traineddata, 3.8 MB).
+foreach ($f in (Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Filter '*.sh')) {
+    $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+    if (-not ($bytes -contains 13)) { continue }
+    $out = New-Object System.Collections.Generic.List[byte]
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        if ($bytes[$i] -eq 13 -and ($i + 1) -lt $bytes.Length -and $bytes[$i + 1] -eq 10) { continue }
+        $out.Add($bytes[$i])
+    }
+    [System.IO.File]::WriteAllBytes($f.FullName, $out.ToArray())
+    Write-Host "normalized CRLF -> LF: $($f.Name)"
+}
+
+# Hard gate: no shell script in the artifact may contain CR.
+$crViolations = @()
+foreach ($f in (Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Filter '*.sh')) {
+    if ([System.IO.File]::ReadAllBytes($f.FullName) -contains 13) {
+        $crViolations += ($f.FullName.Substring($stagingRoot.Length).TrimStart('\','/') -replace '\\','/')
+    }
+}
+if ($crViolations.Count -gt 0) {
+    Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+    throw "CR found in shell script(s), bash would refuse to run them: $($crViolations -join ', ')"
+}
+
+# Binary assets must arrive byte-identical (regression guard: a byte-wise
+# CRLF replacement once ate 83 bytes out of rus.traineddata).
+foreach ($bin in (Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Filter '*.traineddata')) {
+    $rel = $bin.FullName.Substring($stagingRoot.Length).TrimStart('\','/')
+    $srcBin = Join-Path $repoRoot $rel
+    if ((Test-Path $srcBin) -and ((Get-Item $srcBin).Length -ne $bin.Length)) {
+        $srcLen = (Get-Item $srcBin).Length
+        Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw "binary asset corrupted during staging: $rel ($srcLen -> $($bin.Length) bytes)"
+    }
+}
+
 # Self-check: manifest must end up at staging root.
 $manifestStaged = Join-Path $stagingRoot '.claude-plugin/plugin.json'
 if (-not (Test-Path $manifestStaged)) {

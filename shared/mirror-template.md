@@ -19,6 +19,13 @@ confidence: high
 content_hash: "sha256:3a1f…"     # хэш содержимого — ключ кэша OCR (vision один раз; shared/ocr.md §4)
 vision_done: false                # true → vision выполнен для этого content_hash, переиспользовать
 low_confidence_fields: []         # критичные реквизиты с низким confidence (shared/ocr.md §7)
+completeness: full                # full | partial | fragment (shared/ocr.md §7)
+quality: high                     # high | medium | low (shared/ocr.md §7)
+needs_manual_review: false        # true при quality: low, структурном режиме, обрезанном рендере,
+                                  #   low-conf критичном поле или расхождении двух чтений (F.18)
+decisive: false                   # решающий документ — критичные поля читаются дважды (ocr.md §3.2)
+verified_fields: []               # поля, РЕАЛЬНО прошедшие второе чтение; пусто при decisive: true
+                                  #   = проверка не выполнялась, а не «выполнена и чисто»
 ---
 
 # Договор поставки №47
@@ -49,6 +56,16 @@ low_confidence_fields: []         # критичные реквизиты с н�
 | content_hash | да | `sha256:<hex>` содержимого — ключ кэша OCR (vision один раз; [`shared/ocr.md` §4](ocr.md)) |
 | vision_done | нет | true → vision выполнен для этого `content_hash`; повтор переиспользует зеркало |
 | low_confidence_fields | нет | список критичных реквизитов с низким confidence ([`shared/ocr.md` §7](ocr.md)) |
+| completeness | нет | `full` / `partial` / `fragment` — критерий [`shared/ocr.md` §7](ocr.md) |
+| quality | нет | `high` / `medium` / `low` — критерий [`shared/ocr.md` §7](ocr.md) |
+| needs_manual_review | нет | `true` при `quality: low`, структурном режиме, обрезанном рендере, low-conf критичном поле или расхождении двух чтений (F.18) |
+| decisive | нет | `true` → решающий документ: критичные поля перечитывает вторая, независимая голова ([`shared/ocr.md` §3.2](ocr.md)) |
+| verified_fields | нет | поля, **реально** прошедшие второе чтение (+ вердикт). Пусто при `decisive: true` = проверка не выполнялась |
+
+> **Почему эти поля перечислены здесь (F.18, смежная находка).** `shared/ocr.md` §5/§7 требует
+> писать `completeness` / `quality` / `needs_manual_review` во frontmatter зеркала, а таблица
+> шаблона их не называла — расхождение протокола и шаблона. Те же поля дублируются в записи
+> `index.yaml` (`shared/index-schema.yaml`): зеркало — источник, индекс — реестр для поиска.
 
 ## Правила создания
 
