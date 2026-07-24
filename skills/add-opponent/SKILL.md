@@ -24,7 +24,7 @@ description: >
 1. Прочитай `.vassal/case.yaml` -- определи, кто оппонент (ответчик, истец, третье лицо). Возьми его `inn`, `ogrn`, `name`, `short_name` из `parties[]` -- это понадобится в фазе 4 для двойной записи в глобальную память.
 2. Прочитай `.vassal/index.yaml` -- контекст существующих документов.
 2.1. **Загрузи глобальный профиль оппонента** (если есть) -- по правилу из [shared/conventions.md](../../shared/conventions.md) → раздел «Глобальная память (кросс-дельная)»:
-   - Разрезолви `$VASSAL_GLOBAL_DIR` (по умолчанию `~/.vassal-global/`).
+   - Разрезолви `$VASSAL_GLOBAL_DIR` (правило «Резолв переменной и онбординг (F.26)»: `$env:` в PowerShell; не задана → fallback + разовое уведомление).
    - Собери **оба** возможных имени файла:
      - `primary_path` = `counterparties/inn-{ИНН}.md`, если `inn` оппонента известен из `case.yaml`; иначе `null`.
      - `fallback_path` = `counterparties/noinn-{slug-name}.md` (slug по правилам conventions на основе `short_name`, иначе `name`).
@@ -125,7 +125,7 @@ description: >
     - Оформи бандл (если есть приложения): `bundle_id`, `anchor`, `members`. **Самостоятельные акты бандлом не оформляются** (F.17): у каждого своя запись и своя процессуальная папка
     - Поля качества (`seal`/`signature`/`completeness`/`quality`/`needs_manual_review`) -- как в [intake/SKILL.md](../intake/SKILL.md) → «Поля качества документа»; для решающих документов -- `decisive`/`decisive_reason`/`verified_fields` (F.18)
     - Обнови `next_id` (на число новых записей) и `next_bundle_id` (на число созданных бандлов) -- index-schema.yaml, постусловия conventions.md → «Категория 1»
-15. Добавь запись в `.vassal/history.md`. Если в фазе 4 был выполнен экспресс-анализ -- укажи: создан локальный `opponent-filing-*.md` и обновлён глобальный `$VASSAL_GLOBAL_DIR/counterparties/{slug}.md` (или: глобальная память недоступна -- {причина}).
+15. Добавь запись в `.vassal/history.md`. Если в фазе 4 был выполнен экспресс-анализ -- укажи: создан локальный `opponent-filing-*.md` и обновлён глобальный `counterparties/{slug}.md`. **Если запись ушла в эфемерный fallback** (`VASSAL_GLOBAL_DIR` не задана, `shared/conventions.md` → «Резолв переменной и онбординг (F.26)» п. 3) -- пометь `(резервный путь ~/.vassal-global/, вне синка -- в песочнице не сохранится)`, не рапортуй как о постоянном. Сбой записи -- укажи причину.
 16. **Очистка «Входящие документы/»** -> «На удаление/» через `mv` (как в intake; см. `shared/conventions.md` → «Cowork-first robustness»).
 
 ### Фаза 4 -- Экспресс-анализ (опционально)
@@ -141,7 +141,7 @@ description: >
     - Сохрани в `.vassal/analysis/opponent-filing-{ГГГГ-ММ-ДД}-{doc-id}.md` (префикс `opponent-filing-` -- анализ **письменного** процдокумента оппонента; зеркальный префикс `opponent-hearing-` использует `analyze-hearing` для анализа устной позиции; doc-id -- идентификатор основного процессуального документа оппонента из `index.yaml`).
     - Покажи краткую сводку Сюзерену в чате
 19. **Двойная запись в глобальный профиль оппонента** -- по правилу из [shared/conventions.md](../../shared/conventions.md) → «Глобальная память (кросс-дельная)»:
-    - Разрезолви `$VASSAL_GLOBAL_DIR` (по умолчанию `~/.vassal-global/`).
+    - Разрезолви `$VASSAL_GLOBAL_DIR` **по правилу «Резолв переменной и онбординг (F.26)»** (в PowerShell -- `$env:VASSAL_GLOBAL_DIR`; не задана → fallback `~/.vassal-global/` + разовое уведомление; в песочнице fallback эфемерен — предупреди на записи).
     - Создай папку `$VASSAL_GLOBAL_DIR/counterparties/` если её нет (`mkdir -p`).
     - **Целевое имя файла -- по приоритету:**
       - Если `inn` известен в `case.yaml` → `inn-{ИНН}.md` (канонический путь).
