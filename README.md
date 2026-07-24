@@ -72,7 +72,7 @@ chmod +x scripts/setup.sh
 
 ```powershell
 # Windows, кросс-машинно (одна команда работает на всех машинах одного пользователя):
-reg add "HKCU\Environment" /v VASSAL_GLOBAL_DIR /t REG_EXPAND_SZ /d "%OneDrive%\vassal-global" /f
+reg add "HKCU\Environment" /v VASSAL_GLOBAL_DIR /t REG_EXPAND_SZ /d "%OneDrive%\Документы\Claude Cowork\.vassal-global" /f
 ```
 
 ```bash
@@ -80,7 +80,7 @@ reg add "HKCU\Environment" /v VASSAL_GLOBAL_DIR /t REG_EXPAND_SZ /d "%OneDrive%\
 export VASSAL_GLOBAL_DIR="$HOME/OneDrive/vassal-global"
 ```
 
-Полная инструкция (в т.ч. почему `setx` не подходит) — [scripts/notion-init.md](scripts/notion-init.md) §4.1.
+**После `reg add` перезапустите Claude Code** — переменные окружения подхватываются только новыми процессами. Полная инструкция (в т.ч. почему `setx` не подходит и как задать `VASSAL_CONFIG_DIR` соседним подкаталогом) — [scripts/notion-init.md](scripts/notion-init.md) §4.1.
 
 ### 4. Связанный плагин (опционально)
 
