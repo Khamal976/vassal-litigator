@@ -358,7 +358,7 @@ Staging-зона для комплектов документов, готовы�
 
 **Зачем.** Аналитический скилл, который строит нашу позицию, а затем сам же её атакует и сам же решает, что из атаки принять, страдает **consistency bias**: одна голова склонна защищать только что построенное. Приём разрывает петлю — атаку ведёт **отдельный субагент**, изолированный от нашей аналитики.
 
-**Канон (обязательные свойства).** Скиллы, где предусмотрен red team (`appeal`, `cassation`, `build-position`, `prepare-hearing`, `settlement`, `draft-claim`), реализуют его так:
+**Канон (обязательные свойства).** Скиллы, где предусмотрен red team (`appeal`, `cassation`, `build-position`, `prepare-hearing`, `settlement`, `draft-claim`, `enforcement-adjustment`), реализуют его так:
 
 1. **Отдельный субагент, `model: "opus"`** (строка «Правовой анализ, позиции, жалобы» таблицы выше — это назначение **по фазе**, не эскалация по F.18). Не инлайн в основном потоке.
 2. **Изоляция контекста.** Субагент получает **только финальный продукт** (список оснований / проект документа / выработанную позицию) и материалы противника (обжалуемый акт, отзыв оппонента), но **не нашу аналитику фазы выработки**. Формулировка-образец: «Не имей доступа к нашей аналитике — работай только с {финальный продукт} и {материалы противника}».
@@ -488,6 +488,9 @@ Per-skill шаблоны (полный список):
 | `appeal` (внутр.) | `.vassal/analysis/appeal-prep-{ГГГГ-ММ-ДД}.md` (рабочий перечень приложений + аналитика подготовки; создаётся лениво, при переподготовке в ту же дату — суффикс `-{ЧЧММ}`). Читает `build-submission` для точного резолва приложений по `[doc-NNN]` | служебная зона |
 | `cassation` | `{ГГГГ-ММ-ДД} Кассационная жалоба.md` (**подаваемый `.md`**; `.docx` — на `build-submission` через `format-doc`) | корень дела |
 | `cassation` (внутр.) | `.vassal/analysis/cassation-prep-{ГГГГ-ММ-ДД}.md` (полная аналитика фаз 2-3: сравнительный разбор актов, кандидаты в основания с фильтром непереоценки, отброшенные основания, практика ВС РФ, ранжирование, стресс-тест) | служебная зона |
+| `enforcement-adjustment` | `{ГГГГ-ММ-ДД} Заявление об отсрочке исполнения.md` + `.docx` (варианты по `kind`: о рассрочке / об изменении способа и порядка исполнения / об отсрочке взыскания исполнительского сбора) — режим `request` | корень дела |
+| `enforcement-adjustment` | `{ГГГГ-ММ-ДД} Возражения на заявление об отсрочке.md` + `.docx` (режим `objection`; в СОЮ по ст. 203.1 ГПК вырождается в частную жалобу) ИЛИ `{ГГГГ-ММ-ДД} Заявление о прекращении рассрочки.md` + `.docx` (режим `termination`, п. 26 ППВС № 50 от 17.11.2015) | корень дела |
+| `enforcement-adjustment` (внутр.) | `.vassal/analysis/enforcement-{ГГГГ-ММ-ДД}-redteam.md` (атака отдельного Opus-субагента) и `enforcement-{ГГГГ-ММ-ДД}-disclosure.md` (что раскрываем оппоненту приложениями и что это ему даёт — специфический риск режима) | служебная зона |
 | `settlement` (сводный) | `{ГГГГ-ММ-ДД} Мировое соглашение — анализ и проект.md` ИЛИ `{ГГГГ-ММ-ДД} Отказ от иска — проект.md` ИЛИ `{ГГГГ-ММ-ДД} Признание иска — проект.md` (по `case.settlement.mode`) | корень дела |
 | `settlement` (документы) | Подаваемые `.md`: `{ГГГГ-ММ-ДД} Мировое соглашение.md` (текст для подписи обеими сторонами, ст. 140 АПК — **двусторонний, вне охвата `format-doc`**); `{ГГГГ-ММ-ДД} Ходатайство об утверждении мирового соглашения.md` (по умолчанию одностороннее; в фазе 5 опции «два отдельных» / «совместное»); `{ГГГГ-ММ-ДД} Заявление об отказе от иска.md`; `{ГГГГ-ММ-ДД} Заявление о признании иска.md`. `.docx` печатается на `build-submission` через `format-doc` (ходатайство/заявления); мировое — прежним путём (arbitrum-docx опц. / `.md`). | корень дела |
 | `settlement` (внутр.) | `.vassal/analysis/settlement-{ГГГГ-ММ-ДД}-{секция}.md` (секции: `batna`, `zone-of-agreement`, `opponent-forecast`, `risks`, `terms-draft`) | служебная зона |
@@ -1080,7 +1083,7 @@ Notion-слой -- **опциональный**. Плагин полностью
 
 Чтобы скиллы не перезаписывали друг другу значения и не возникала «гонка обновлений», каждое поле `case.yaml` имеет **owner-скиллы** — те, кому разрешено его писать. Все остальные читают, но не пишут.
 
-Матрица фиксируется в [case-schema.yaml](case-schema.yaml) v6 в виде комментариев `# writes: <скиллы>` и `# reads: <скиллы>` рядом с каждым полем (или блоком).
+Матрица фиксируется в [case-schema.yaml](case-schema.yaml) v7 в виде комментариев `# writes: <скиллы>` и `# reads: <скиллы>` рядом с каждым полем (или блоком).
 
 Сводно по основным группам:
 
@@ -1093,12 +1096,13 @@ Notion-слой -- **опциональный**. Плагин полностью
 | `case.amounts.{claim, court_fee}` | `init-case`, `build-position` | `prepare-hearing`, `appeal`, `cassation` |
 | `case.qualification` | `legal-review`, `build-position` (только `applicable_norms`) | `build-position`, `prepare-hearing`, `appeal`, `cassation` |
 | `case.jurisdiction` | `legal-review`; **`confirmed_by_user` — дополнительно `prepare-hearing`** (фиксация явного подтверждения форума Сюзереном, F.9) | `build-position`, `prepare-hearing`, `appeal`, `cassation` |
-| `case.pretrial` | `legal-review` | `prepare-hearing`, `appeal` |
+| `case.pretrial` | `legal-review` (**только** `required`, `required_source`); `draft-claim` (все остальные поля блока — основание, сроки, реквизиты направления, ответ адресата, `incoming`) | `prepare-hearing`, `appeal`, `legal-review`, `study-evidence`, `settlement` |
 | `case.settlement.*` | `settlement` (основные поля), `analyze-hearing` (`confirmed_date`, если суд утвердил/принял прямо в заседании) | `prepare-hearing` (хук в фазе 2 п.13), `cassation` (если `confirmed_date != null` и обжалуется по ст. 141 АПК) |
 | `case.appeal.*` | `appeal` (расчётные), `analyze-hearing` (`hearing_date`, `ruling_date`), `init-case` (фактические поля при постапелляционном входе — `origin: intake`) | `cassation` |
 | `case.cassation.*` | `cassation` (расчётные), `analyze-hearing` (`hearing_date`, `ruling_date`), `init-case` (фактические поля при посткассационном входе — `origin: intake`) | — |
-| `case.status` | `init-case`, `appeal`, `cassation`, `analyze-hearing`, `settlement` | все |
-| `case.timeline` (append-only) | `init-case`, `legal-review`, `analyze-hearing`, `appeal`, `cassation`, `settlement` | все |
+| `case.enforcement.*` | `enforcement-adjustment` (блок `adjustment` + реквизиты, если их ещё нет); `settlement` (`writ_*`, `proceeding_number` при `mode='agreement'` × `stage='enforcement'`); `init-case` (фактические реквизиты при входе на стадии исполнения — `origin: intake`); `analyze-hearing` (`adjustment.hearing_date`, `adjustment.ruling_date`) | `settlement`, `cassation` (обжалование определения по ч. 4 ст. 324 АПК), `legal-review`, `prepare-hearing` |
+| `case.status` | `init-case`, `appeal`, `cassation`, `analyze-hearing`, `settlement`, `enforcement-adjustment` | все |
+| `case.timeline` (append-only) | `init-case`, `legal-review`, `analyze-hearing`, `appeal`, `cassation`, `settlement`, `enforcement-adjustment` | все |
 | `case.filing_date` | `init-case` | все |
 | `case.production_type` (+ `_basis`, `_set_by`, `_set_date`) | `init-case`, `legal-review` | `build-position`, `prepare-hearing`, `appeal` |
 | `case.bankruptcy.*` | `init-case` (структура, известные даты), `legal-review` (`registry_close_date`, `procedure`, даты публикации) | `build-position`, `prepare-hearing`, `appeal`, `cassation`, `legal-review` |
@@ -1287,7 +1291,7 @@ Phase 0 -- быстрая проверка «есть ли смысл довер
 
    **Боевые случаи, которые правило ловит:** «п. 11 ст. 25.1» из документа клиента разошёлся по всем артефактам двух дел; несуществующее определение КС попало в иск; абз. 2 п. 4 ст. 20.4 ФЗ-127 подан как «управляющий обязан возместить убытки от пополнения компфонда» — норма обязывает возместить **членам саморегулируемой организации**, а не самой СРО (номер верен, содержание переврано). Отчёт 10.07 формулирует корень: «клиентский документ я по умолчанию считал источником, а не гипотезой».
 
-**Зона действия:** `study-evidence`, `legal-review`, `build-position`, `prepare-hearing`, `appeal`, `cassation`, `build-submission`, `settlement`, `draft-judgment`, `analyze-hearing`, `draft-claim`; правило 6 дополнительно помечается на приёме (`intake` / `add-evidence` / `add-opponent` — строка в EXTRACTION NOTES зеркала). Реализуется как обязательные шаги в соответствующих SKILL.md (в составе доработки этих скиллов).
+**Зона действия:** `study-evidence`, `legal-review`, `build-position`, `prepare-hearing`, `appeal`, `cassation`, `build-submission`, `settlement`, `draft-judgment`, `analyze-hearing`, `draft-claim`, `enforcement-adjustment`; правило 6 дополнительно помечается на приёме (`intake` / `add-evidence` / `add-opponent` — строка в EXTRACTION NOTES зеркала). Реализуется как обязательные шаги в соответствующих SKILL.md (в составе доработки этих скиллов).
 
 ## Статус вывода о компетенции (F.9)
 

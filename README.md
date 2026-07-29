@@ -14,7 +14,7 @@
 
 **Обжалование** — подготовка апелляционных и кассационных жалоб с систематическим поиском оснований по АПК/ГПК РФ, проект судебного решения с учётом стиля конкретного судьи.
 
-## Скиллы (20)
+## Скиллы (23)
 
 | Фаза | Скилл | Описание |
 |------|-------|----------|
@@ -36,6 +36,7 @@
 | Обжалование | `draft-judgment` | Проект судебного решения |
 | | `appeal` | Апелляционная жалоба |
 | | `cassation` | Кассационная жалоба |
+| Исполнение | `enforcement-adjustment` | Отсрочка, рассрочка, изменение способа и порядка исполнения (ст. 324 АПК / ст. 203, 434 ГПК / ст. 358 КАС); возражения и прекращение отсрочки |
 | На подачу | `format-doc` | Оформление .docx по фирменной типографике (headless, детерминированно) |
 | | `build-submission` | Сборка нумерованного комплекта на подачу |
 | Sync | `notion-sync` | Опц. push метаданных дел и профилей судей в Notion (Cases + Judges) |
@@ -108,8 +109,8 @@ export VASSAL_GLOBAL_DIR="$HOME/OneDrive/vassal-global"
 vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
-├── commands/                 # Slash-команды (21)
-├── skills/                   # Скиллы (22)
+├── commands/                 # Slash-команды (23)
+├── skills/                   # Скиллы (23)
 │   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
@@ -129,6 +130,7 @@ vassal-litigator/
 │   ├── draft-judgment/
 │   ├── appeal/
 │   ├── cassation/
+│   ├── enforcement-adjustment/ # Отсрочка / рассрочка / изменение способа исполнения (профиль — у legal-review)
 │   ├── build-submission/
 │   ├── format-doc/             # Headless-оформление .docx (references/style-spec.md)
 │   ├── backfill-global/
