@@ -41,8 +41,9 @@
 | | `build-submission` | Сборка нумерованного комплекта на подачу |
 | Sync | `notion-sync` | Опц. push метаданных дел и профилей судей в Notion (Cases + Judges) |
 | | `backfill-global` | Разовый перенос локальной аналитики в глобальную память |
+| | `index-samples` | Разовое наполнение каталога образцов — указателя «по вопросу X был документ типа Y в деле Z» |
 
-**Кросс-дельная память** (этап 6): профили судей и оппонентов накапливаются в `$VASSAL_GLOBAL_DIR/` (по умолчанию `~/.vassal-global/`) -- читаются всеми скиллами как фон до анализа. На двух машинах с разными именами пользователей -- через `reg add /t REG_EXPAND_SZ` с `%OneDrive%`. См. [shared/conventions.md](shared/conventions.md) → «Глобальная память» и [ARCHITECTURE.md §15](ARCHITECTURE.md).
+**Кросс-дельная память** (этап 6): профили судей и оппонентов, а также **каталог образцов** (`samples/` — указатель «по вопросу X был документ типа Y в деле Z», без текста и без абсолютных путей) накапливаются в `$VASSAL_GLOBAL_DIR/` (по умолчанию `~/.vassal-global/`) -- читаются всеми скиллами как фон до анализа. На двух машинах с разными именами пользователей -- через `reg add /t REG_EXPAND_SZ` с `%OneDrive%`. См. [shared/conventions.md](shared/conventions.md) → «Глобальная память» и [ARCHITECTURE.md §15](ARCHITECTURE.md).
 
 **Открытые задачи и ограничения** -- [OPEN-ITEMS.md](OPEN-ITEMS.md) (живой трекер).
 
@@ -134,6 +135,7 @@ vassal-litigator/
 │   ├── build-submission/
 │   ├── format-doc/             # Headless-оформление .docx (references/style-spec.md)
 │   ├── backfill-global/
+│   ├── index-samples/
 │   └── notion-sync/
 ├── shared/                   # Общие схемы и конвенции
 │   ├── conventions.md
