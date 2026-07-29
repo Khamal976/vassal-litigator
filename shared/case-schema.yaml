@@ -188,13 +188,62 @@ case:
     special_norm: null              # Найденная норма ("п. 12 ст. 20 ФЗ-127") или null, если не найдена
 
   # Досудебный порядок — заполняется на этапе legal-review, не при init-case
-  # writes: legal-review
+  # writes: legal-review (обязательность и факт соблюдения),
+  #         draft-claim (всё остальное: применённая норма, сроки, реквизиты направления, ответ)
+  # reads:  legal-review, draft-claim, prepare-hearing, build-position, study-evidence
+  #
+  # ⚠️ Три РАЗНЫЕ шкалы времени, их нельзя смешивать (B.20):
+  #   A. response_deadline_days — сколько дней мы дали должнику (пишем в тексте претензии)
+  #   B. claim_ready_date       — с какой даты возникает право на иск
+  #   C. приостановление исковой давности — считается отдельно, в поле не хранится
+  # По абз. 1 ч. 5 ст. 4 АПК шкала B считается со дня НАПРАВЛЕНИЯ претензии.
+  # По специальным нормам точка отсчёта иная — см. deadline_start_from.
   pretrial:
     required: null                  # true | false | null
     required_source: null           # user | agent | document
     complied: null                  # true | false | null
     complied_source: null           # user | agent
-    pretrial_date: null             # Дата направления претензии
+    pretrial_date: null             # Дата фактического направления претензии (ГГГГ-ММ-ДД).
+                                    # НЕ заполняется при генерации — только микро-шагом
+                                    # «претензия направлена», когда отправка состоялась.
+    pretrial_date_source: null      # user | document — из чата Сюзерена либо извлечено
+                                    # из квитанции / описи / отчёта об отслеживании
+    pretrial_date_evidence: null    # doc_id документа-источника, если source = document
+
+    # --- Правовое основание и сроки (пишет draft-claim) ---
+    basis_norm: null                # Норма, из которой следует обязательность
+                                    # ("абз. 1 ч. 5 ст. 4 АПК", "ст. 124 УЖТ", "п. 2 ст. 452 ГК")
+    basis_source: null              # law | contract — законный или договорный порядок
+    wait_period_days: null          # Срок ожидания перед иском (30 по общей норме АПК)
+    deadline_start_from: null       # sending | receipt | registration — точка отсчёта шкалы B.
+                                    # sending — общая норма АПК; receipt — транспорт;
+                                    # registration — связь (п. 4 ст. 55 ФЗ № 126-ФЗ)
+    response_deadline_days: null    # Шкала A: срок, который мы дали должнику в тексте
+    claim_ready_date: null          # Шкала B: дата, с которой можно подавать иск (ГГГГ-ММ-ДД).
+                                    # Расчётное поле — заполняется вместе с pretrial_date
+
+    # --- Реквизиты направления (пишет draft-claim) ---
+    sent_method: null               # почта-заказное | почта-ценное-с-описью | нарочно |
+                                    # курьер | email | ЭДО
+    sent_to_address: null           # Адрес, по которому направлено
+    address_basis: null             # ЕГРЮЛ | ЕГРИП | договор | указан-адресатом
+    tracking: null                  # Трек-номер / реквизиты подтверждения отправки
+    amount: null                    # Сумма требования на дату претензии (основной долг +
+                                    # неустойка + проценты), одной строкой с разбивкой
+
+    # --- Ответ адресата (пишет draft-claim) ---
+    reply_received: null            # true | false | null
+    reply_date: null                # Дата получения ответа (ГГГГ-ММ-ДД)
+    reply_admits_debt: null         # true | false | null — есть ли в ответе признание долга.
+                                    # Признание прерывает исковую давность (ст. 203 ГК);
+                                    # ответ без указания на признание сам по себе признанием
+                                    # НЕ является (п. 20 ППВС № 43)
+
+    # --- Входящая претензия к нам (режим draft-claim mode=reply) ---
+    incoming: null                  # null либо блок с теми же по смыслу полями:
+                                    # doc_id, received_date, claimed_amount, response_due_date,
+                                    # response_obligatory (true для перевозчика / оператора
+                                    # связи / туроператора), our_reply_doc_id
 
   # Банкротный профиль — заполняется ТОЛЬКО при case.category = "банкротство".
   # Для прочих категорий блок отсутствует или весь null.

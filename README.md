@@ -26,6 +26,7 @@
 | | `legal-review` | Комплексный правовой анализ |
 | | `build-position` | Формирование правовой позиции |
 | | `revise-position` | Обратное распространение правок позиции по памяти дела (леджер отзывов) |
+| Досудебная стадия | `draft-claim` | Досудебная претензия либо ответ на входящую претензию |
 | Ведение дела | `add-evidence` | Приём доп. доказательств от клиента |
 | | `add-opponent` | Приём и анализ документов оппонента |
 | | `prepare-hearing` | Подготовка к заседанию |
@@ -108,7 +109,7 @@ vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
 ├── commands/                 # Slash-команды (21)
-├── skills/                   # Скиллы (21)
+├── skills/                   # Скиллы (22)
 │   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
@@ -118,6 +119,7 @@ vassal-litigator/
 │   │   └── references/       # Справочники по срокам, подсудности, досудебному порядку
 │   ├── build-position/
 │   ├── revise-position/
+│   ├── draft-claim/            # Досудебная претензия / ответ на неё (правовой профиль — у legal-review)
 │   ├── add-evidence/
 │   ├── add-opponent/
 │   ├── prepare-hearing/
