@@ -141,7 +141,7 @@
 
 ## 6. Связи
 
-- **Ключи роутинга** — `shared/case-schema.yaml` v7: `case.category` (enum 7 значений + синоним), `case.bankruptcy.procedure`, `case.jurisdiction.competent_court`.
+- **Ключи роутинга** — `shared/case-schema.yaml` v8: `case.category` (enum 7 значений + синоним), `case.bankruptcy.procedure`, `case.jurisdiction.competent_court`.
 - **Owner'ы записи** (см. `shared/conventions.md` → «Ownership полей case.yaml»): `category` — init-case; `bankruptcy.*` — init-case (структура) + legal-review (`registry_close_date`, procedure); `jurisdiction` — legal-review.
 - **Потребители:** `legal-review` (Фаза 1.5 + блоки c/d/e), `prepare-hearing` (профиль + чек-лист просительной/типы). Позже: `appeal`/`cassation` (сроки обжалования по профилю — §3.1).
 - **Материальные банкротные составы** (для §3.5) встроены (WS-1d, все 4 ✅): A (реестр) · B (оспаривание сделок III.1) · C (субсидиарка/убытки III.2) · D (жалоба/ответственность АУ).
