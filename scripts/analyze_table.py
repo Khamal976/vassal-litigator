@@ -178,6 +178,23 @@ def _close(a, b, tolerance):
     return abs(a - b) <= max(tolerance, abs(b) * REL_TOLERANCE)
 
 
+def dependency_hint(module: str) -> str:
+    """Сообщение об отсутствующей зависимости — с интерпретатором и готовой командой.
+
+    Совет «запустите setup.sh» бесполезен там, где чаще всего и возникает проблема:
+    на Windows в PowerShell bash-скрипт не исполняется, а `python3` разрешается в
+    ДРУГОЙ интерпретатор (заглушка WindowsApps), где зависимостей нет — при том что
+    в `python` они установлены. Поэтому печатаем, чем именно запущено, и команду
+    установки ровно для этого интерпретатора.
+    """
+    return (f"{module} не установлен для этого интерпретатора.\n"
+            f"  Запущено: {sys.executable}\n"
+            f"  Установить: \"{sys.executable}\" -m pip install {module}\n"
+            f"  Либо запустите тем интерпретатором, где зависимости уже есть "
+            f"(на Windows это обычно `python`, а не `python3`: последний может быть "
+            f"заглушкой WindowsApps). В Linux/Cowork — `scripts/setup.sh`.")
+
+
 def _money(value) -> str:
     """Сумма по-русски: пробел между разрядами, запятая в дробной части.
 
@@ -733,7 +750,7 @@ def selftest() -> int:
     try:
         from openpyxl import Workbook
     except ImportError:
-        print("SELFTEST: openpyxl не установлен — запустите scripts/setup.sh")
+        print("SELFTEST не выполнен: " + dependency_hint("openpyxl"))
         return 1
 
     tmp = tempfile.mkdtemp(prefix="analyze_table_selftest_")

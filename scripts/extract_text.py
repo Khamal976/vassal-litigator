@@ -457,7 +457,7 @@ def extract_pdf(filepath: str,
             return {"text": "", "method": "none", "confidence": "low", "pages": 0,
                     "needs_vision": False, "vision_pages": [], "vision_reason": None,
                     "structural_recommended": False,
-                    "warnings": ["ни pymupdf, ни poppler (pdftotext) не установлены — PDF не прочитан"]}
+                    "warnings": [dependency_hint("pymupdf") + " (либо системный poppler/pdftotext)"]}
         engine = "poppler"
         engine_warnings.append(
             "pymupdf недоступен — извлечение через poppler (pdftotext); "
@@ -574,7 +574,7 @@ def extract_docx_text(filepath: str) -> dict:
         from docx import Document
     except ImportError:
         return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-                "needs_vision": False, "warnings": ["python-docx не установлен"]}
+                "needs_vision": False, "warnings": [dependency_hint("python-docx")]}
 
     doc = Document(filepath)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -911,13 +911,28 @@ def _table_summary_text(table: dict, filename: str, warnings: list = None) -> st
     return "\n".join(lines).rstrip() + "\n"
 
 
+def dependency_hint(module: str) -> str:
+    """Сообщение о зависимости — с интерпретатором и готовой командой установки.
+
+    «Запустите setup.sh» бесполезно там, где проблема и возникает: на Windows в
+    PowerShell bash-скрипт не исполняется, а `python3` разрешается в ДРУГОЙ
+    интерпретатор (заглушка WindowsApps) без зависимостей — при том что в `python`
+    они стоят. Молчаливый уход в fallback при установленной зависимости — тот же
+    класс дефекта, что F.26 (тихая деградация при верной настройке).
+    """
+    return (f"{module} не установлен для этого интерпретатора. "
+            f"Запущено: {sys.executable}. "
+            f"Установить: \"{sys.executable}\" -m pip install {module}. "
+            f"Либо запустите тем интерпретатором, где зависимости есть (на Windows "
+            f"обычно `python`, а не `python3`); в Linux/Cowork — scripts/setup.sh")
+
+
 def extract_xlsx_structure(filepath: str) -> dict:
     """.xlsx / .xlsm → структурная сводка (не анализ). Контракт как у остальных."""
     try:
         from openpyxl import load_workbook
     except ImportError:
-        return _table_error("corrupt", False,
-                            "openpyxl не установлен — запустите scripts/setup.sh")
+        return _table_error("corrupt", False, dependency_hint("openpyxl"))
 
     try:
         wb = load_workbook(filepath, data_only=True, read_only=True, keep_links=False)
