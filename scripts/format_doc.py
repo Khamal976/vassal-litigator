@@ -976,15 +976,71 @@ def main():
 
 
 def _header_from_case(case, doc_type):
+    """Минимальная сборка шапки из case.yaml, когда в .md её нет (best-effort).
+
+    Вариант шапки зависит от ТИПА документа (style-spec §2 «Шапка — варианты»):
+      «претензия»  -> «Кому: [контрагент]» + адрес, «От: [заявитель]» + адрес.
+                      Блока «В [суд]» и номера дела НЕТ — адресат не суд.
+      остальные    -> «В [суд]» · «Дело №[номер]».
+
+    B.20: прежняя версия принимала doc_type, но не использовала его — для претензии
+    собирала ровно те два элемента, которых в ней быть не должно.
+    """
     c = case.get("case", case) if isinstance(case, dict) else {}
+
+    if doc_type == "претензия":
+        return _pretrial_header_from_case(c)
+
+    lines = []
     court = c.get("court", "")
     number = c.get("number", "")
-    lines = []
     if court:
         lines.append("В %s" % court)
     if number:
         lines.append("Дело №%s" % number)
     return [l for l in lines if l]
+
+
+def _pretrial_header_from_case(c):
+    """Шапка претензии: «Кому:» — контрагент, «От:» — наш клиент.
+
+    Наша сторона определяется по case.our_client.party_id; адресат — первая из
+    остальных сторон. При нескольких контрагентах это лишь fallback: скилл
+    draft-claim генерирует комплект и пишет шапку каждой претензии прямо в .md
+    (п. 8 ППВС № 18 — порядок соблюдается в отношении каждого ответчика).
+    """
+    parties = [p for p in (c.get("parties") or []) if isinstance(p, dict)]
+    our_id = ((c.get("our_client") or {}).get("party_id")
+              if isinstance(c.get("our_client"), dict) else None)
+
+    sender = next((p for p in parties if p.get("party_id") == our_id), None)
+
+    # Без надёжно определённой нашей стороны шапку не собираем. Догадка здесь
+    # означала бы риск адресовать претензию собственному клиенту — пусть лучше
+    # шапку задаст сам .md, чем движок молча назначит адресата.
+    if sender is None:
+        sys.stderr.write("format_doc: претензия — не определён our_client.party_id, "
+                         "шапка не собрана (задай её в .md)\n")
+        return []
+
+    addressee = next((p for p in parties if p.get("party_id") != our_id), None)
+    if addressee is None:
+        sys.stderr.write("format_doc: претензия — в case.yaml нет контрагента, "
+                         "шапка не собрана (задай её в .md)\n")
+        return []
+
+    lines = []
+    for label, party in (("Кому:", addressee), ("От:", sender)):
+        if not party:
+            continue
+        name = party.get("name") or party.get("short_name")
+        if not name:
+            continue
+        lines.append("%s %s" % (label, name))
+        addr = party.get("address")
+        if addr:
+            lines.append(str(addr))
+    return lines
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ Cases ссылается на Judges и (с этапа 6.2b) на Counterparties
   "title": "Cases (vassal-litigator)",
   "description": "Реестр всех дел, синхронизируется из локального .vassal/case.yaml каждого дела",
   "parent": { "type": "page_id", "page_id": "<id-родительской-страницы>" },
-  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Исполнение':green, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Оппонент\" RELATION('<counterparties-data-source-id>') COMMENT 'Опционально -- убрать если шаг 2 пропущен', \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
+  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Примирение':purple, 'Завершено (мировое)':green, 'Завершено (отказ)':gray, 'Исполнение':green, 'Решение вступило в силу':default, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Оппонент\" RELATION('<counterparties-data-source-id>') COMMENT 'Опционально -- убрать если шаг 2 пропущен', \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
 }
 ```
 
@@ -87,9 +87,11 @@ Cases ссылается на Judges и (с этапа 6.2b) на Counterparties
 
 ## 4. Заполнение конфига
 
-### 4.1. Реши, где файл будет жить
+### 4.1. Реши, где файл будет жить (+ `VASSAL_GLOBAL_DIR` для глобальной памяти)
 
-**Вариант А -- одна машина (по умолчанию):** `~/.vassal/notion-config.yaml`. Никаких env vars не нужно.
+> **`VASSAL_GLOBAL_DIR` нужна и без Notion.** Эта переменная задаёт путь к кросс-дельной памяти (профили судей и оппонентов) — она работает независимо от Notion-слоя. Если вы Notion не используете, всё равно прочитайте команду `reg add VASSAL_GLOBAL_DIR` ниже: без заданной переменной память уходит в резервный `~/.vassal-global/`, который в песочнице Cowork **не переживает сессию**. Онбординг-подсказку про это выводит `init-case` при заведении первого дела (F.26).
+
+**Вариант А -- одна машина (по умолчанию):** `~/.vassal/notion-config.yaml`. Никаких env vars не нужно **для Notion-конфига** (но `VASSAL_GLOBAL_DIR` для глобальной памяти задать всё равно стоит — см. врезку выше).
 
 **Вариант Б -- две и более машины с синком через облако (OneDrive/Dropbox/Yandex.Disk):** положи файл в синхронизируемую папку и укажи путь через `$VASSAL_CONFIG_DIR` + `$VASSAL_GLOBAL_DIR`.
 
@@ -279,7 +281,7 @@ notion:
 
 ### 6.2c -- дедуп профиля оппонента `inn-/noinn-` (только локально, миграция в Notion не нужна)
 
-**Что изменилось:** `add-opponent` и `legal-review` теперь умеют детектировать «теневой дубль» (когда на одного оппонента в `$VASSAL_GLOBAL_DIR/counterparties/` есть и `inn-{ИНН}.md`, и `noinn-{slug}.md`) и предупреждают Сюзерена. Это **только правки в SKILL.md** -- никаких изменений в Notion-схеме не требуется.
+**Что изменилось:** `add-opponent` теперь **детектирует** «теневой дубль» (когда на одного оппонента в `$VASSAL_GLOBAL_DIR/counterparties/` есть и `inn-{ИНН}.md`, и `noinn-{slug}.md`) и предупреждает Сюзерена; `legal-review` **предупреждает превентивно** — при оппоненте-юрлице без ИНН в `case.yaml` (это будущая причина дубля), но сам в `$VASSAL_GLOBAL_DIR` не заглядывает. Это **только правки в SKILL.md** -- никаких изменений в Notion-схеме не требуется.
 
 **Что нужно от Сюзерена:** проверить, есть ли уже накопленные теневые дубли в `$VASSAL_GLOBAL_DIR/counterparties/`:
 ```powershell

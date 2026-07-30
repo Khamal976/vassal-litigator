@@ -11,4 +11,4 @@ description: Выработка правовой позиции — аргуме
 3. Если аргументов нет — определи роль из `case.yaml` (`our_client.party_id`) и построй позицию для нашего клиента.
 4. Убедись, что `.vassal/case.yaml` и `.vassal/index.yaml` существуют.
 5. Проверь, есть ли `.vassal/analysis/`. Если нет — предупреди, что рекомендуется сначала запустить `/vassal-litigator:legal-review`.
-6. Выполни pipeline из SKILL.md: загрузка контекста → анализ (Opus) → preview → apply.
+6. Выполни pipeline из SKILL.md: загрузка контекста → анализ (Opus) → стресс-тест (red team отдельным субагентом) → preview → apply.
