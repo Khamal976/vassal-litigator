@@ -1462,7 +1462,7 @@ def selftest() -> int:
     ws.append([None, None, None, None, "ИТОГО", round(good * 4 + 5000 + 10000, 2)])          # total
     bad_path = os.path.join(tmp, "bad.xlsx"); wb.save(bad_path)
 
-    # 2) корректный расчёт (высокосный год → 366)
+    # 2) корректный расчёт (високосный год → 366)
     wb2 = Workbook(); w2 = wb2.active; w2.title = "Проценты"
     w2.append(["Сумма долга", "с", "по", "Дней", "Ставка, %", "Проценты"])
     total = 0.0

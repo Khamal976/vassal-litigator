@@ -164,10 +164,14 @@ vassal-litigator/
 │   ├── case-schema.yaml
 │   ├── index-schema.yaml
 │   └── mirror-template.md
+│   ├── ocr.md               # протокол извлечения текста (vision, таблицы §5а)
+│   ├── category-routing.md  # диспетчер «категория дела -> справочники и нормы»
 ├── scripts/                  # Утилиты
 │   ├── setup.sh                 # Linux/Cowork
 │   ├── setup.ps1                # Windows (PowerShell)
-│   ├── extract_text.py
+│   ├── extract_text.py          # приём: PDF/DOCX/таблицы -> текст, рендер, спот-сверка
+│   ├── analyze_table.py         # разбор таблиц: 4 профиля + --selftest (G.3)
+│   ├── format_doc.py            # печать .docx по фирменной типографике
 │   ├── tessdata/             # Вендоренный rus.traineddata для OCR
 │   ├── notion-init.md
 │   └── build-plugin.ps1
