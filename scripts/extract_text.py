@@ -912,7 +912,14 @@ def _table_summary_text(table: dict, filename: str, warnings: list = None) -> st
 
 
 def _user_site_dirs() -> list:
-    """Каталоги пользовательских пакетов (`AppData\\Roaming\\Python\\...` на Windows)."""
+    """Каталоги пользовательских пакетов — тремя независимыми способами.
+
+    Одного `site.getusersitepackages()` недостаточно: на машине Сюзерена (2026-07-30)
+    он не привёл к каталогу, где пакет лежал физически. Поэтому дополнительно
+    спрашиваем `sysconfig` (схема `nt_user`) и сканируем `%APPDATA%\\Python\\*`.
+    Скан ограничен каталогом **текущей** версии Python: подкладывать пакеты от
+    другой версии нельзя — у бинарных модулей (pymupdf) это тихая порча.
+    """
     dirs = []
     try:
         import site
@@ -921,7 +928,31 @@ def _user_site_dirs() -> list:
             dirs += [value] if isinstance(value, str) else list(value)
     except Exception:
         pass
-    return [d for d in dirs if d]
+    try:
+        import sysconfig
+        for scheme in ("nt_user", "posix_user"):
+            if scheme in sysconfig.get_scheme_names():
+                purelib = sysconfig.get_paths(scheme).get("purelib")
+                if purelib:
+                    dirs.append(purelib)
+    except Exception:
+        pass
+    tag = f"Python{sys.version_info.major}{sys.version_info.minor}"
+    for root_env in ("APPDATA", "XDG_DATA_HOME", "HOME"):
+        root = os.environ.get(root_env)
+        if not root:
+            continue
+        for candidate in (os.path.join(root, "Python", tag, "site-packages"),
+                          os.path.join(root, "Python", tag.lower(), "site-packages")):
+            if os.path.isdir(candidate):
+                dirs.append(candidate)
+
+    seen, ordered = set(), []
+    for d in dirs:
+        if d and d not in seen:
+            seen.add(d)
+            ordered.append(d)
+    return ordered
 
 
 def ensure_user_site() -> list:
