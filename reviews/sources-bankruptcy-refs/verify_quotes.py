@@ -54,8 +54,29 @@ def strip_markup(q):
     """
     q = re.sub(r'(?m)^\s*>\s?', ' ', q)
     q = q.replace('//', ' ')
-    q = re.sub(r'^\s*[.…]{2,}\s*|\s*[.…]{2,}\s*$', ' ', q)
+    q = re.sub(r'^\s*(?:\.{2,}|…)\s*|\s*(?:\.{2,}|…)\s*$', ' ', q)
     return q.strip()
+
+
+def fragments(q):
+    """Цитата с усечением внутри: многоточие — не текст, а пропуск.
+
+    Такую цитату проверяем по кускам: каждый должен найтись в одном и том же
+    источнике и в том же порядке. Это ловит подмену внутри цитаты, но не
+    придирается к законному сокращению.
+    """
+    parts = [p.strip() for p in re.split(r'\.{2,}|…', q) if len(p.strip()) >= 15]
+    return parts or [q]
+
+
+def found_in(q, text):
+    pos = 0
+    for frag in fragments(q):
+        idx = text.find(frag, pos)
+        if idx == -1:
+            return False
+        pos = idx + len(frag)
+    return True
 
 
 def extract_quotes(text):
@@ -100,7 +121,7 @@ def check(path, parts, names):
     print('=' * 70)
     for line, raw in quotes:
         q = norm(raw)
-        found = next((n for t, n in zip(parts, names) if q in t), None)
+        found = next((n for t, n in zip(parts, names) if found_in(q, t)), None)
         if found:
             ok += 1
             continue
