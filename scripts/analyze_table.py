@@ -40,8 +40,13 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract_text import (                      # noqa: E402  (общая эвристика чтения)
     _cell_str, _cell_empty, _find_header_row, _pad_row, _is_date_like,
-    TABLE_MAX_SCAN_ROWS,
+    TABLE_MAX_SCAN_ROWS, ensure_user_site, dependency_hint,
 )
+
+# Подключить user-site, если он есть на диске, но исключён из sys.path (боевой случай
+# 2026-07-30: openpyxl установлен, а импорт не проходит). Импорт extract_text это уже
+# делает на уровне модуля; вызов здесь — чтобы порядок не зависел от того, кто первый.
+ensure_user_site()
 
 # --- параметры ---------------------------------------------------------------
 
@@ -178,21 +183,6 @@ def _close(a, b, tolerance):
     return abs(a - b) <= max(tolerance, abs(b) * REL_TOLERANCE)
 
 
-def dependency_hint(module: str) -> str:
-    """Сообщение об отсутствующей зависимости — с интерпретатором и готовой командой.
-
-    Совет «запустите setup.sh» бесполезен там, где чаще всего и возникает проблема:
-    на Windows в PowerShell bash-скрипт не исполняется, а `python3` разрешается в
-    ДРУГОЙ интерпретатор (заглушка WindowsApps), где зависимостей нет — при том что
-    в `python` они установлены. Поэтому печатаем, чем именно запущено, и команду
-    установки ровно для этого интерпретатора.
-    """
-    return (f"{module} не установлен для этого интерпретатора.\n"
-            f"  Запущено: {sys.executable}\n"
-            f"  Установить: \"{sys.executable}\" -m pip install {module}\n"
-            f"  Либо запустите тем интерпретатором, где зависимости уже есть "
-            f"(на Windows это обычно `python`, а не `python3`: последний может быть "
-            f"заглушкой WindowsApps). В Linux/Cowork — `scripts/setup.sh`.")
 
 
 def _money(value) -> str:

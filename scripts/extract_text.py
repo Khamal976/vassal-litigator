@@ -911,6 +911,53 @@ def _table_summary_text(table: dict, filename: str, warnings: list = None) -> st
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _user_site_dirs() -> list:
+    """Каталоги пользовательских пакетов (`AppData\\Roaming\\Python\\...` на Windows)."""
+    dirs = []
+    try:
+        import site
+        if hasattr(site, "getusersitepackages"):
+            value = site.getusersitepackages()
+            dirs += [value] if isinstance(value, str) else list(value)
+    except Exception:
+        pass
+    return [d for d in dirs if d]
+
+
+def ensure_user_site() -> list:
+    """Подключить user-site, если он существует, но исключён из `sys.path`.
+
+    Боевой случай (2026-07-30, машина Сюзерена): `openpyxl` физически установлен в
+    `C:\\Users\\…\\AppData\\Roaming\\Python\\Python314\\site-packages`, но в его сессии
+    PowerShell этот каталог в `sys.path` не попадает — и скрипт отвечает «не
+    установлен» при установленной библиотеке. Причины бывают разные
+    (`PYTHONNOUSERSITE`, запуск с `-s`, политика окружения), и выяснять их на каждой
+    машине бессмысленно: если каталог есть на диске, подключаем его сами.
+    """
+    added = []
+    for d in _user_site_dirs():
+        if os.path.isdir(d) and d not in sys.path:
+            sys.path.append(d)
+            added.append(d)
+    return added
+
+
+ensure_user_site()      # до первых импортов сторонних библиотек
+
+
+def _module_on_disk(module: str) -> str:
+    """Путь к пакету в user-site, если он там физически лежит (иначе '')."""
+    name = module.replace("-", "_").lower()
+    aliases = {"python_docx": "docx", "pymupdf": "fitz"}
+    name = aliases.get(name, name)
+    for d in _user_site_dirs():
+        for candidate in (os.path.join(d, name),
+                          os.path.join(d, name + ".py")):
+            if os.path.exists(candidate):
+                return candidate
+    return ""
+
+
 def dependency_hint(module: str) -> str:
     """Сообщение о зависимости — с интерпретатором и готовой командой установки.
 
@@ -920,10 +967,24 @@ def dependency_hint(module: str) -> str:
     они стоят. Молчаливый уход в fallback при установленной зависимости — тот же
     класс дефекта, что F.26 (тихая деградация при верной настройке).
     """
-    return (f"{module} не установлен для этого интерпретатора. "
-            f"Запущено: {sys.executable}. "
-            f"Установить: \"{sys.executable}\" -m pip install {module}. "
-            f"Либо запустите тем интерпретатором, где зависимости есть (на Windows "
+    on_disk = _module_on_disk(module)
+    if on_disk:
+        # Пакет есть, но не подхватился даже после ensure_user_site() — значит каталог
+        # исключён жёстко. Тогда «установите» — вредный совет: он уводит от причины.
+        return (f"{module} УСТАНОВЛЕН, но недоступен для импорта.\n"
+                f"  Пакет лежит: {on_disk}\n"
+                f"  Запущено:    {sys.executable}\n"
+                f"  Каталог пользовательских пакетов исключён из пути поиска. "
+                f"Проверьте: \"{sys.executable}\" -c \"import site,sys; "
+                f"print(site.ENABLE_USER_SITE, sys.flags.no_user_site)\" — если там "
+                f"False/1, снимите PYTHONNOUSERSITE (`$env:PYTHONNOUSERSITE=''`) либо "
+                f"установите пакет в системный каталог: "
+                f"\"{sys.executable}\" -m pip install --target "
+                f"\"{os.path.join(sys.prefix, 'Lib', 'site-packages')}\" {module}")
+    return (f"{module} не установлен для этого интерпретатора.\n"
+            f"  Запущено: {sys.executable}\n"
+            f"  Установить: \"{sys.executable}\" -m pip install {module}\n"
+            f"  Либо запустите тем интерпретатором, где зависимости есть (на Windows "
             f"обычно `python`, а не `python3`); в Linux/Cowork — scripts/setup.sh")
 
 
