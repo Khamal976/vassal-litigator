@@ -145,7 +145,7 @@ description: >
 
 13. **Новые файлы**: для каждого —
     - Присвой ID (`doc-{next_id}`)
-    - Извлеки текст по протоколу `shared/ocr.md` (vision основной; кэш по `content_hash`)
+    - Извлеки текст по протоколу `shared/ocr.md` (vision основной; кэш по `content_hash`; таблицы `.xlsx`/`.xlsm`/крупный `.csv` — §5а, структурная сводка `table-structure` без vision)
     - Вычисли `content_hash` (SHA-256 по бинарному содержимому, см. `shared/conventions.md` → «Дедупликация по `content_hash`»)
     - Создай md-зеркало
     - Добавь запись в index.yaml

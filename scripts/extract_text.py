@@ -7,6 +7,10 @@ extract_text.py — детерминированная Python-нога OCR-мо�
 детерминированную часть и НЕ выполняет vision (Python не имеет доступа к Read tool):
 
   - программное извлечение текста: PDF с текстовым слоем, DOCX, TXT;
+  - структурная сводка таблиц (G.3): `.xlsx`/`.xlsm`/крупный `.csv` → скелет в зеркало
+    (листы, шапки, образец строк, итоговые строки, диапазон дат, скрытые листы,
+    детект формул без сохранённых значений). Приём таблицу НЕ анализирует — суммы,
+    сверки и флаги считает `analyze_table.py` на стороне `study-evidence`;
   - детект «мусорного» текстового слоя (F3.3) — mojibake / тонкий OCR-артефакт
     поверх скана → директива needs_vision вместо молчаливого возврата мусора;
   - решение needs_vision / vision_pages / vision_reason (F3.1): vision — основной
@@ -617,6 +621,456 @@ def extract_text_file(filepath: str) -> dict:
     }
 
 
+# --- Извлечение из таблиц: структурная сводка (G.3) --------------------------
+#
+# Приём таблицу НЕ анализирует (канон ocr.md: зеркало транскрипционное, юрвыводы
+# не в зеркало). Здесь только скелет: листы, шапки, образец строк, итоговые
+# строки, диапазон дат, служебные признаки. Арифметика и сверки — analyze_table.py
+# на стороне study-evidence.
+
+TABLE_TOTAL_MARKERS = (
+    "итого", "всего", "оборот", "сальдо", "баланс", "к оплате", "сумма по",
+    "итог", "total",
+)
+TABLE_MAX_SCAN_ROWS = 200_000     # защита от гигантского листа
+TABLE_SAMPLE_ROWS = 15            # строк-образцов в зеркало (по профилю G.3)
+TABLE_HEADER_SEARCH_ROWS = 20     # в пределах скольких строк искать шапку
+TABLE_FORMULA_SCAN_ROWS = 2000    # предел второго прохода (детект формул без значений)
+TABLE_CSV_FULLTEXT_ROWS = 300     # CSV до этого размера отдаём полнотекстом (как раньше)
+
+
+def _table_error(error_class: str, retryable: bool, message: str) -> dict:
+    """Единый JSON-отказ табличного извлечения (контракт E.14)."""
+    return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+            "needs_vision": False, "error_class": error_class,
+            "retryable": retryable, "warnings": [message], "table": None}
+
+
+def _cell_empty(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _cell_str(value) -> str:
+    """Ячейка → строка для зеркала. Даты приводим к ISO, числа не форматируем."""
+    import datetime as _dt
+    if value is None:
+        return ""
+    if isinstance(value, _dt.datetime):
+        return value.strftime("%Y-%m-%d") if (value.hour, value.minute, value.second) == (0, 0, 0) \
+            else value.strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, _dt.date):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, _dt.time):
+        return value.strftime("%H:%M")
+    return str(value).strip()
+
+
+def _is_date_like(value) -> bool:
+    import datetime as _dt
+    return isinstance(value, (_dt.datetime, _dt.date)) and not isinstance(value, bool)
+
+
+def _pad_row(cells: list, width: int) -> list:
+    """Выравнивает строку до ширины листа. Позиция ячейки = позиция колонки.
+
+    Пустые ячейки НЕ выбрасываются: иначе значения съезжают влево и списание
+    печатается на месте прихода (поймано тестом при разработке G.3).
+    """
+    return (list(cells) + [""] * width)[:width]
+
+
+def _find_header_row(rows: list) -> int:
+    """Индекс строки-шапки (0-based) в пределах первых строк.
+
+    У выписок и реестров сверху 3–7 строк преамбулы (наименование банка, период,
+    реквизиты), поэтому первая строка — не шапка. Признак шапки: максимум непустых
+    ТЕКСТОВЫХ ячеек при непустой следующей строке. Совпадений нет → 0.
+    """
+    best_idx, best_score = 0, -1
+    limit = min(len(rows), TABLE_HEADER_SEARCH_ROWS)
+    for i in range(limit):
+        row = rows[i]
+        text_cells = sum(1 for c in row if isinstance(c, str) and c.strip())
+        if text_cells < 2:
+            continue
+        next_nonempty = any(not _cell_empty(c) for c in rows[i + 1]) if i + 1 < len(rows) else False
+        score = text_cells + (2 if next_nonempty else 0)
+        if score > best_score:
+            best_idx, best_score = i, score
+    return best_idx if best_score > 0 else 0
+
+
+def _sheet_digest(ws, sheet_name: str, state: str) -> dict:
+    """Структурный дайджест одного листа (значения уже вычислены: data_only=True)."""
+    rows, truncated = [], False
+    for n, row in enumerate(ws.iter_rows(values_only=True)):
+        if n >= TABLE_MAX_SCAN_ROWS:
+            truncated = True
+            break
+        rows.append(list(row))
+
+    # хвостовые полностью пустые строки не считаем данными (openpyxl их отдаёт)
+    while rows and all(_cell_empty(c) for c in rows[-1]):
+        rows.pop()
+
+    if not rows:
+        return {"name": sheet_name, "state": state, "rows": 0, "cols": 0,
+                "header_row": None, "headers": [], "sample": [], "totals": [],
+                "date_range": None, "truncated": truncated}
+
+    cols = max(len(r) for r in rows)
+    hdr_idx = _find_header_row(rows)
+    headers = _pad_row([_cell_str(c) for c in rows[hdr_idx]], cols)
+
+    # ВАЖНО: пустые ячейки НЕ выбрасываем — иначе значения съезжают влево и, например,
+    # списание печатается на месте прихода. Позиция ячейки = позиция колонки, всегда.
+    sample = [_pad_row([_cell_str(c) for c in r], cols)
+              for r in rows[hdr_idx + 1: hdr_idx + 1 + TABLE_SAMPLE_ROWS]]
+
+    # итоговые строки — по маркеру в любой текстовой ячейке
+    totals = []
+    for i, row in enumerate(rows):
+        if i <= hdr_idx:
+            continue
+        joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
+        if joined and any(m in joined for m in TABLE_TOTAL_MARKERS):
+            totals.append({"row": i + 1, "cells": _pad_row([_cell_str(c) for c in row], cols)})
+        if len(totals) >= 20:
+            break
+
+    # диапазон дат по первой колонке, где даты преобладают
+    date_range = None
+    for col in range(cols):
+        values = [r[col] for r in rows[hdr_idx + 1:] if col < len(r)]
+        dates = [v for v in values if _is_date_like(v)]
+        if dates and len(dates) >= max(3, len(values) // 2):
+            date_range = {"column": headers[col] if col < len(headers) else f"col{col + 1}",
+                          "min": _cell_str(min(dates)), "max": _cell_str(max(dates))}
+            break
+
+    return {"name": sheet_name, "state": state, "rows": len(rows), "cols": cols,
+            "header_row": hdr_idx + 1, "headers": headers, "sample": sample,
+            "totals": totals, "date_range": date_range, "truncated": truncated}
+
+
+def _count_stale_formulas(filepath: str, sheet_names: list) -> dict:
+    """Формулы без сохранённых значений — сравнение двух проходов по одним координатам.
+
+    Классическая ловушка: файл сохранён без кэша вычисленных значений (типично для
+    выгрузок из 1С и банковских систем). openpyxl в режиме значений вернёт пустоту
+    там, где в Excel видна сумма, — и суммы молча станут нулями. Поэтому идём по
+    файлу дважды параллельно: формулы (data_only=False) против значений
+    (data_only=True). Формула есть, значения нет → stale.
+
+    Проверять по «весь лист пуст» недостаточно: пустыми бывают только расчётные
+    колонки, а справочные данные при этом читаются — картина выглядит нормальной.
+    """
+    try:
+        from openpyxl import load_workbook
+        wb_frm = load_workbook(filepath, data_only=False, read_only=True, keep_links=False)
+        wb_val = load_workbook(filepath, data_only=True, read_only=True, keep_links=False)
+    except Exception:
+        return {"formulas": 0, "stale": 0, "checked": False, "examples": []}
+
+    formulas, stale, examples = 0, 0, []
+    try:
+        for name in sheet_names:
+            if name not in wb_frm.sheetnames or name not in wb_val.sheetnames:
+                continue
+            frm_rows = wb_frm[name].iter_rows(values_only=True)
+            val_rows = wb_val[name].iter_rows(values_only=True)
+            for n, (frm_row, val_row) in enumerate(zip(frm_rows, val_rows)):
+                if n >= TABLE_FORMULA_SCAN_ROWS:
+                    break
+                for col, cell in enumerate(frm_row):
+                    if not (isinstance(cell, str) and cell.startswith("=")):
+                        continue
+                    formulas += 1
+                    value = val_row[col] if col < len(val_row) else None
+                    if _cell_empty(value):
+                        stale += 1
+                        if len(examples) < 5:
+                            examples.append({"sheet": name, "row": n + 1, "col": col + 1,
+                                             "formula": cell[:60]})
+    except Exception:
+        return {"formulas": formulas, "stale": stale, "checked": False, "examples": examples}
+    finally:
+        for wb in (wb_frm, wb_val):
+            try:
+                wb.close()
+            except Exception:
+                pass
+    return {"formulas": formulas, "stale": stale, "checked": True, "examples": examples}
+
+
+TABLE_MD_MAX_COLS = 12   # шире — markdown-таблица нечитаема, переходим на пары «шапка: значение»
+
+
+def _md_escape(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def _rows_as_md(headers: list, rows: list, row_labels: list = None) -> list:
+    """Строки → markdown-таблица (правило 2 mirror-template: «таблицы → markdown-таблицы»).
+
+    Колонки не сдвигаются: пустая ячейка остаётся пустой колонкой.
+    """
+    out = []
+    head = (["стр."] if row_labels else []) + [_md_escape(h) or f"·{i + 1}"
+                                               for i, h in enumerate(headers)]
+    out.append("| " + " | ".join(head) + " |")
+    out.append("|" + "---|" * len(head))
+    for i, row in enumerate(rows):
+        cells = [_md_escape(c) for c in row]
+        if row_labels:
+            cells = [str(row_labels[i])] + cells
+        out.append("| " + " | ".join(cells) + " |")
+    return out
+
+
+def _rows_as_pairs(headers: list, rows: list, row_labels: list = None) -> list:
+    """Широкая таблица → по строке на запись, парами «шапка: значение» (пустые опускаем)."""
+    out = []
+    for i, row in enumerate(rows):
+        label = f"строка {row_labels[i]}" if row_labels else f"запись {i + 1}"
+        pairs = [f"{headers[j] or f'кол.{j + 1}'}: {c}"
+                 for j, c in enumerate(row) if c]
+        out.append(f"- **{label}** — " + "; ".join(pairs))
+    return out
+
+
+def _table_summary_text(table: dict, filename: str, warnings: list = None) -> str:
+    """Человекочитаемая структурная сводка — тело зеркала.
+
+    Критичные предупреждения печатаются **в теле**, а не только в поле `warnings`
+    выхода: ни один скилл-приёмник поле `warnings` не читает (проверено разведкой
+    2026-07-30), поэтому предупреждение, оставленное только там, не дойдёт ни до
+    юриста, ни до нижестоящих скиллов.
+    """
+    lines = [f"# Структурная сводка таблицы: {filename}", ""]
+
+    if warnings:
+        lines.append("## ⚠️ Требует внимания")
+        lines.append("")
+        for w in warnings:
+            lines.append(f"- {w}")
+        lines.append("")
+
+    lines.append(f"Листов: {len(table['sheets'])}"
+                 + (f" (из них скрытых: {table['hidden_sheets']})" if table["hidden_sheets"] else ""))
+    if table.get("formulas"):
+        lines.append(f"Ячеек с формулами (в пределах проверки): {table['formulas']}"
+                     + (f", из них без сохранённого значения: {table['stale_formulas']}"
+                        if table.get("stale_formulas") else ""))
+    lines.append("")
+    lines.append("> Значения в сводке прочитаны машинно и точны — но тело таблицы **неполно**: "
+                 "вынесены шапка, первые строки и итоговые строки. Суммы по всему массиву, "
+                 "сверки и поиск расхождений — `study-evidence` (`scripts/analyze_table.py`).")
+    lines.append("")
+
+    for sh in table["sheets"]:
+        title = f"## Лист «{sh['name']}»"
+        if sh["state"] != "visible":
+            title += f"  ⚠️ СКРЫТЫЙ ({sh['state']})"
+        lines.append(title)
+        lines.append(f"Строк: {sh['rows']}, колонок: {sh['cols']}"
+                     + (" — **лист усечён при чтении**" if sh.get("truncated") else ""))
+        if sh["rows"] == 0:
+            lines += ["", "_Лист пуст._", ""]
+            continue
+        if sh["date_range"]:
+            dr = sh["date_range"]
+            lines.append(f"Диапазон дат (колонка «{dr['column']}»): {dr['min']} — {dr['max']}")
+        lines.append("")
+
+        narrow = sh["cols"] <= TABLE_MD_MAX_COLS
+        headers = sh["headers"]
+
+        if sh["sample"]:
+            lines.append(f"**Шапка — строка {sh['header_row']}; далее первые "
+                         f"{len(sh['sample'])} строк(и):**")
+            lines.append("")
+            first_data_row = sh["header_row"] + 1
+            labels = list(range(first_data_row, first_data_row + len(sh["sample"])))
+            lines += (_rows_as_md(headers, sh["sample"], labels) if narrow
+                      else _rows_as_pairs(headers, sh["sample"], labels))
+            lines.append("")
+        elif headers:
+            lines.append(f"**Шапка (строка {sh['header_row']}):** "
+                         + " | ".join(h for h in headers if h))
+            lines.append("")
+
+        if sh["totals"]:
+            lines.append("**Итоговые строки, найденные по маркеру:**")
+            lines.append("")
+            labels = [t["row"] for t in sh["totals"]]
+            rows = [t["cells"] for t in sh["totals"]]
+            lines += (_rows_as_md(headers, rows, labels) if narrow
+                      else _rows_as_pairs(headers, rows, labels))
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def extract_xlsx_structure(filepath: str) -> dict:
+    """.xlsx / .xlsm → структурная сводка (не анализ). Контракт как у остальных."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return _table_error("corrupt", False,
+                            "openpyxl не установлен — запустите scripts/setup.sh")
+
+    try:
+        wb = load_workbook(filepath, data_only=True, read_only=True, keep_links=False)
+    except Exception as exc:
+        error_class, retryable, message = classify_open_error(filepath, exc)
+        # Порядок важен: 0-байтовый и не материализованный файл имеют свои ветки приёма
+        # (E.14 / E.6) и «паролем/битым» называться не должны — иначе пустышку отправят
+        # снимать несуществующий пароль вместо запроса перезалива.
+        if error_class in ("empty", "not_materialized"):
+            return _table_error(error_class, retryable, message.replace("PDF", "Файл"))
+        msg = str(exc).lower()
+        # зашифрованный .xlsx и переименованный .xls — оба не zip-контейнеры
+        if "not a zip" in msg or "badzipfile" in type(exc).__name__.lower():
+            return _table_error(
+                "corrupt", False,
+                "Файл не является .xlsx: возможно, он защищён паролем либо это старый "
+                "формат .xls с новым расширением. Снимите пароль или сохраните как .xlsx")
+        return _table_error(error_class, retryable, message.replace("PDF", "Файл"))
+
+    try:
+        sheets, hidden = [], 0
+        for name in wb.sheetnames:
+            ws = wb[name]
+            state = getattr(ws, "sheet_state", "visible") or "visible"
+            if state != "visible":
+                hidden += 1
+            sheets.append(_sheet_digest(ws, name, state))
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    formula_info = _count_stale_formulas(filepath, [s["name"] for s in sheets])
+
+    table = {
+        "kind": "spreadsheet",
+        "sheets": sheets,
+        "hidden_sheets": hidden,
+        "formulas": formula_info["formulas"],
+        "stale_formulas": formula_info["stale"],
+        "stale_examples": formula_info["examples"],
+        "total_rows": sum(s["rows"] for s in sheets),
+    }
+
+    warnings = []
+    # Ловушка «формулы без сохранённых значений» — первой строкой: она обесценивает суммы.
+    if formula_info["stale"]:
+        where = ", ".join(f"«{e['sheet']}» стр. {e['row']}" for e in formula_info["examples"][:3])
+        warnings.append(
+            f"**Формулы без сохранённых значений: {formula_info['stale']} ячеек** ({where}). "
+            f"В Excel вы видите там суммы, а в файле их нет — программное чтение вернёт пустоту, "
+            f"и итоги окажутся заниженными. Откройте файл в Excel, пересохраните и повторите приём. "
+            f"Типично для выгрузок из 1С и банковских систем")
+    if hidden:
+        warnings.append(f"Скрытых листов: {hidden} — проверьте их содержимое: там бывает "
+                        f"исходник до правки")
+    if any(s.get("truncated") for s in sheets):
+        warnings.append(f"Лист(ы) усечены при чтении (предел {TABLE_MAX_SCAN_ROWS} строк) — "
+                        f"итоги по всему массиву считать через `analyze_table.py`")
+    if table["total_rows"] == 0:
+        warnings.append("Все листы пусты — проверьте файл (возможно, это шаблон или выгрузка "
+                        "не сохранилась)")
+    if not formula_info["checked"] and formula_info["formulas"] == 0:
+        warnings.append("Проверка формул не выполнена (файл не открылся вторым проходом) — "
+                        "если в Excel видны расчётные колонки, сверьте итоги вручную")
+
+    return {
+        "text": _table_summary_text(table, Path(filepath).name, warnings),
+        "method": "table-structure",
+        "confidence": "high",
+        "pages": max(1, len(sheets)),
+        "needs_vision": False,
+        "warnings": warnings,
+        "table": table,
+    }
+
+
+def extract_csv_table(filepath: str) -> dict:
+    """CSV: небольшой — полнотекстом (как раньше), крупный — структурной сводкой."""
+    import csv as _csv
+
+    raw = None
+    for encoding in ("utf-8-sig", "cp1251"):
+        try:
+            with open(filepath, "r", encoding=encoding, newline="") as f:
+                raw = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+        except Exception as exc:
+            error_class, retryable, message = classify_open_error(filepath, exc)
+            return _table_error(error_class, retryable, message.replace("PDF", "Файл"))
+    if raw is None:
+        return _table_error("corrupt", False, "Не удалось прочитать файл ни в UTF-8, ни в cp1251")
+
+    try:
+        dialect = _csv.Sniffer().sniff(raw[:4096], delimiters=";,\t|")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = ";" if raw[:4096].count(";") > raw[:4096].count(",") else ","
+
+    rows = [r for r in _csv.reader(raw.splitlines(), delimiter=delimiter)]
+    while rows and all(not c.strip() for c in rows[-1]):
+        rows.pop()
+
+    # Мелкий CSV дешевле и полезнее отдать целиком — поведение как до G.3.
+    if len(rows) <= TABLE_CSV_FULLTEXT_ROWS:
+        return {"text": raw, "method": "text-read", "confidence": "high", "pages": 1,
+                "needs_vision": False,
+                "warnings": [f"CSV прочитан полнотекстом ({len(rows)} строк, разделитель "
+                             f"«{delimiter}»)"],
+                "table": {"kind": "csv", "rows": len(rows), "delimiter": delimiter,
+                          "fulltext": True}}
+
+    hdr_idx = _find_header_row(rows)
+    sheet = {
+        "name": Path(filepath).name, "state": "visible", "rows": len(rows),
+        "cols": max(len(r) for r in rows), "header_row": hdr_idx + 1,
+        "headers": [c.strip() for c in rows[hdr_idx]],
+        "sample": [[c.strip() for c in r]
+                   for r in rows[hdr_idx + 1: hdr_idx + 1 + TABLE_SAMPLE_ROWS]],
+        "totals": [{"row": i + 1, "cells": [c.strip() for c in r if c.strip()]}
+                   for i, r in enumerate(rows)
+                   if i > hdr_idx
+                   and any(m in " ".join(r).lower() for m in TABLE_TOTAL_MARKERS)][:20],
+        "date_range": None, "truncated": False,
+    }
+    table = {"kind": "csv", "sheets": [sheet], "hidden_sheets": 0, "formulas": 0,
+             "delimiter": delimiter, "total_rows": len(rows), "fulltext": False}
+    csv_warn = [f"CSV крупный ({len(rows)} строк) — в зеркало вынесена структурная сводка, "
+                f"не полный текст; итоги по массиву — через `analyze_table.py`"]
+    return {
+        "text": _table_summary_text(table, Path(filepath).name, csv_warn),
+        "method": "table-structure",
+        "confidence": "high",
+        "pages": 1,
+        "needs_vision": False,
+        "warnings": [f"CSV крупный ({len(rows)} строк) — в зеркало вынесена структурная "
+                     f"сводка, не полный текст"],
+        "table": table,
+    }
+
+
+def extract_xls_legacy(filepath: str) -> dict:
+    """.xls (формат до 2007) — программно не читаем: честный отказ, не «неизвестный формат»."""
+    return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+            "needs_vision": False, "table": None,
+            "warnings": ["Формат .xls (Excel до 2007) не поддерживается: откройте файл и "
+                         "сохраните как .xlsx, затем повторите приём. Библиотеки xlrd в "
+                         "среде нет by-design — новый формат покрывает все боевые случаи"]}
+
+
 def extract_image(filepath: str) -> dict:
     """Изображение: vision — основной путь (не tesseract). Директива агенту."""
     return {
@@ -886,7 +1340,13 @@ def extract(filepath: str,
         result = extract_pdf(filepath, max_head_pages, structural_threshold)
     elif ext == ".docx":
         result = extract_docx_text(filepath)
-    elif ext in (".txt", ".md", ".csv", ".html", ".htm", ".xml", ".json", ".yaml", ".yml"):
+    elif ext in (".xlsx", ".xlsm"):
+        result = extract_xlsx_structure(filepath)          # G.3
+    elif ext == ".csv":
+        result = extract_csv_table(filepath)               # G.3 (мелкий CSV — как раньше)
+    elif ext == ".xls":
+        result = extract_xls_legacy(filepath)              # G.3
+    elif ext in (".txt", ".md", ".html", ".htm", ".xml", ".json", ".yaml", ".yml"):
         result = extract_text_file(filepath)
     elif ext in (".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp"):
         result = extract_image(filepath)
@@ -910,6 +1370,7 @@ def extract(filepath: str,
     result.setdefault("low_confidence_fields", [])   # заполняется vision-ногой агента
     result.setdefault("error_class", None)           # E.14 — not_materialized|corrupt|empty (иначе None)
     result.setdefault("retryable", False)            # E.14 — True → ретрай с паузой (не «битый»)
+    result.setdefault("table", None)                 # G.3 — структура таблицы (не PDF/DOCX → None)
     return result
 
 

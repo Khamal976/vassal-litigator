@@ -416,7 +416,9 @@ type: договор
 title: "Договор поставки №47"
 date: 2025-06-01
 pages: 12
-extraction_method: pdf-text    # pdf-text | ocr | docx-parse | image-read | manual
+extraction_method: pdf-text    # pdf-text | pdf-text+vision | vision | structural | table-structure | docx-parse | text-read | manual
+                               # (единственный источник правды — shared/mirror-template.md;
+                               #  ocr / image-read поглощены значением vision)
 extraction_model: haiku
 extraction_date: 2026-03-26
 confidence: high               # high | medium | low (качество извлечения)
