@@ -572,9 +572,9 @@ def extract_docx_text(filepath: str) -> dict:
     """Извлечение текста из DOCX."""
     try:
         from docx import Document
-    except ImportError:
+    except ImportError as exc:
         return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-                "needs_vision": False, "warnings": [dependency_hint("python-docx")]}
+                "needs_vision": False, "warnings": [dependency_hint("python-docx", exc)]}
 
     doc = Document(filepath)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -989,7 +989,7 @@ def _module_on_disk(module: str) -> str:
     return ""
 
 
-def dependency_hint(module: str) -> str:
+def dependency_hint(module: str, exc: BaseException = None) -> str:
     """Сообщение о зависимости — с интерпретатором и готовой командой установки.
 
     «Запустите setup.sh» бесполезно там, где проблема и возникает: на Windows в
@@ -998,6 +998,24 @@ def dependency_hint(module: str) -> str:
     они стоят. Молчаливый уход в fallback при установленной зависимости — тот же
     класс дефекта, что F.26 (тихая деградация при верной настройке).
     """
+    # ПЕРВЫМ ДЕЛОМ — фактическая ошибка импорта, без нашей интерпретации.
+    # `except ImportError` ловит три разных случая: пакета нет · пакет есть, но нет
+    # ЕГО зависимости (`ModuleNotFoundError` — подкласс ImportError) · пакет битый.
+    # Печатать во всех трёх «не установлен» — значит врать о среде и посылать
+    # ставить то, что уже стоит (поймано на машине Сюзерена трижды подряд).
+    real = ""
+    if exc is not None:
+        missing = getattr(exc, "name", None)
+        real = f"  Ошибка импорта: {type(exc).__name__}: {exc}\n"
+        if missing and missing.split(".")[0].lower() != module.replace("-", "_").lower():
+            return (f"{module} не удалось импортировать: не хватает ДРУГОГО пакета "
+                    f"«{missing}» (это зависимость {module}, а не он сам).\n"
+                    + real
+                    + f"  Запущено: {sys.executable}\n"
+                    + f"  Установить недостающее: \"{sys.executable}\" -m pip install {missing}\n"
+                    + f"  Либо переустановить с зависимостями: \"{sys.executable}\" "
+                      f"-m pip install --force-reinstall {module}")
+
     on_disk = _module_on_disk(module)
     if on_disk:
         # Пакет есть, но не подхватился даже после ensure_user_site() — значит каталог
@@ -1013,8 +1031,9 @@ def dependency_hint(module: str) -> str:
                 f"\"{sys.executable}\" -m pip install --target "
                 f"\"{os.path.join(sys.prefix, 'Lib', 'site-packages')}\" {module}")
     return (f"{module} не установлен для этого интерпретатора.\n"
-            f"  Запущено: {sys.executable}\n"
-            f"  Установить: \"{sys.executable}\" -m pip install {module}\n"
+            + real
+            + f"  Запущено: {sys.executable}\n"
+            + f"  Установить: \"{sys.executable}\" -m pip install {module}\n"
             f"  Либо запустите тем интерпретатором, где зависимости есть (на Windows "
             f"обычно `python`, а не `python3`); в Linux/Cowork — scripts/setup.sh")
 
@@ -1023,8 +1042,8 @@ def extract_xlsx_structure(filepath: str) -> dict:
     """.xlsx / .xlsm → структурная сводка (не анализ). Контракт как у остальных."""
     try:
         from openpyxl import load_workbook
-    except ImportError:
-        return _table_error("corrupt", False, dependency_hint("openpyxl"))
+    except ImportError as exc:
+        return _table_error("corrupt", False, dependency_hint("openpyxl", exc))
 
     try:
         wb = load_workbook(filepath, data_only=True, read_only=True, keep_links=False)

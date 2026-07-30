@@ -739,8 +739,8 @@ def selftest() -> int:
     import tempfile
     try:
         from openpyxl import Workbook
-    except ImportError:
-        print("SELFTEST не выполнен: " + dependency_hint("openpyxl"))
+    except ImportError as exc:
+        print("SELFTEST не выполнен: " + dependency_hint("openpyxl", exc))
         return 1
 
     tmp = tempfile.mkdtemp(prefix="analyze_table_selftest_")
