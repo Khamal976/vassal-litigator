@@ -19,7 +19,8 @@ analyze_table.py — аналитическая нога табличного р
 
 Профили (первая версия — по решению Сюзерена 2026-07-30):
     debt-calc   — расчёт долга / неустойки / процентов (наш и оппонента)
-    (statement · registry · payments — следующими шагами)
+    statement   — выписка по счёту: обороты, полнота, дубли, дробление, получатели
+    (registry · payments — следующими шагами)
 
 Запуск:
     python3 analyze_table.py <файл.xlsx> --profile debt-calc [--sheet "Лист"]
@@ -454,7 +455,271 @@ def load_sheet(path: str, sheet: str = None):
 
 # --- CLI --------------------------------------------------------------------
 
-PROFILES = {"debt-calc": profile_debt_calc}
+# --- профиль statement (выписка по счёту) -----------------------------------
+
+STATEMENT_MARKERS = {
+    "date":    ("дата", "дата операции", "дата проводки", "дата документа"),
+    "debit":   ("списание", "расход", "дебет", "по дебету", "уменьшение"),
+    "credit":  ("приход", "поступление", "кредит", "по кредиту", "зачисление",
+                "увеличение"),
+    "amount":  ("сумма", "сумма операции", "сумма по операции"),
+    "party":   ("контрагент", "плательщик", "получатель", "наименование",
+                "корреспондент", "бенефициар"),
+    "inn":     ("инн",),
+    "purpose": ("назначение", "назначение платежа", "основание", "содержание операции"),
+    "balance": ("остаток", "сальдо", "исходящий остаток", "баланс"),
+}
+
+SPLIT_MIN_PAYMENTS = 3      # сколько платежей одному лицу подряд считать дроблением
+SPLIT_WINDOW_DAYS = 2       # в пределах скольких дней
+TOP_PARTIES = 10
+
+
+def _detect_by_markers(headers: list, markers: dict) -> dict:
+    found, norm = {}, [_norm_header(h) for h in headers]
+    for key, marks in markers.items():
+        for idx, head in enumerate(norm):
+            if not head or idx in found.values():
+                continue
+            if any(m in head for m in marks):
+                found[key] = idx
+                break
+    return found
+
+
+def _extract_party(rec: dict) -> str:
+    """Контрагент: своя колонка, иначе — из назначения платежа (кавычки / ИНН)."""
+    if rec.get("party") and _cell_str(rec["party"]):
+        return _cell_str(rec["party"])
+    purpose = _cell_str(rec.get("purpose"))
+    if not purpose:
+        return ""
+    m = re.search(r"[«\"']([^»\"']{3,60})[»\"']", purpose)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\b(\d{10}|\d{12})\b", purpose)
+    if m:
+        return f"ИНН {m.group(1)}"
+    return ""
+
+
+def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict:
+    findings = []
+    cols = _detect_by_markers(headers, STATEMENT_MARKERS)
+
+    def add(code, severity, message, cells=None, numbers=None):
+        findings.append({"code": code, "severity": severity, "message": message,
+                         "cells": cells or [], "numbers": numbers or {}})
+
+    # дата: добор по данным, если по заголовку не нашлась
+    if "date" not in cols:
+        for col in range(len(headers)):
+            values = [r[col] for r in rows if col < len(r)]
+            if sum(1 for v in values if _is_date_like(v)) >= max(2, len(values) // 3):
+                cols["date"] = col
+                break
+
+    if "date" not in cols:
+        add("columns-missing", "warn",
+            "Колонка даты не распознана — обороты по периодам и разрывы не проверялись. "
+            "Заголовки: " + " | ".join(h for h in headers if h))
+
+    has_split_columns = "debit" in cols and "credit" in cols
+    if not has_split_columns and "amount" not in cols:
+        add("columns-missing", "warn",
+            "Не найдены ни пара «приход/списание», ни единая колонка суммы — обороты "
+            "не посчитаны. Заголовки: " + " | ".join(h for h in headers if h))
+
+    ops = []
+    for i, row in enumerate(rows):
+        row1 = header_row1 + 1 + i
+        rec = {key: (row[idx] if idx < len(row) else None) for key, idx in cols.items()}
+        date = _as_date(rec.get("date"))
+        debit = _num(rec.get("debit")) if has_split_columns else None
+        credit = _num(rec.get("credit")) if has_split_columns else None
+        single = _num(rec.get("amount")) if not has_split_columns else None
+        if single is not None:
+            # единая колонка со знаком: минус — списание
+            debit, credit = (abs(single), None) if single < 0 else (None, single)
+        if date is None and debit is None and credit is None:
+            continue
+        ops.append({"row": row1, "date": date, "debit": debit, "credit": credit,
+                    "party": _extract_party(rec), "purpose": _cell_str(rec.get("purpose")),
+                    "balance": _num(rec.get("balance"))})
+
+    dated = [o for o in ops if o["date"]]
+    turnover = {
+        "operations": len(ops),
+        "credit_total": round(sum(o["credit"] or 0 for o in ops), 2),
+        "debit_total": round(sum(o["debit"] or 0 for o in ops), 2),
+        "period_from": min((o["date"] for o in dated), default=None),
+        "period_to": max((o["date"] for o in dated), default=None),
+    }
+    turnover["period_from"] = turnover["period_from"].isoformat() if turnover["period_from"] else None
+    turnover["period_to"] = turnover["period_to"].isoformat() if turnover["period_to"] else None
+
+    # --- непрерывность остатка: самая сильная проверка полноты выписки
+    # Если остаток предыдущей строки ± сумма операции ≠ остаток текущей, между ними
+    # пропущены операции. Это довод против доказательственной полноты выписки,
+    # который иначе не увидеть: по датам «дырки» может не быть вовсе.
+    balance_check = {"checked": False, "breaks": []}
+    with_balance = [o for o in ops if o["balance"] is not None]
+    if len(with_balance) >= 3:
+        balance_check["checked"] = True
+        for prev, cur in zip(with_balance, with_balance[1:]):
+            expected = prev["balance"] + (cur["credit"] or 0) - (cur["debit"] or 0)
+            if not _close(expected, cur["balance"], tolerance):
+                gap = round(cur["balance"] - expected, 2)
+                balance_check["breaks"].append({"rows": [prev["row"], cur["row"]],
+                                                "gap": gap})
+                if len(balance_check["breaks"]) <= 10:
+                    add("balance-break", "error",
+                        f"разрыв остатка между строками {prev['row']} и {cur['row']}: "
+                        f"по предыдущему остатку и сумме операции должно быть "
+                        f"{_money(expected)}, в выписке {_money(cur['balance'])} "
+                        f"(расхождение {_money_signed(gap)}). Между строками пропущены "
+                        f"операции — выписка неполная",
+                        [_addr(sheet_name, cur["row"], cols.get("balance", 0))],
+                        {"expected": round(expected, 2), "stated": cur["balance"],
+                         "gap": gap})
+        if len(balance_check["breaks"]) > 10:
+            add("balance-break-many", "error",
+                f"разрывов остатка всего {len(balance_check['breaks'])} — показаны первые 10. "
+                f"Выписка систематически неполна", [], {"breaks": len(balance_check["breaks"])})
+
+    # --- дробление: группа платежей одному лицу в узком окне
+    # Группа собирается ЦЕЛИКОМ (жадно, пока платежи укладываются в окно от первого),
+    # а не обрывается на достижении порога: иначе четвёртый платёж выпадает из группы
+    # и в отчёте видно 3 платежа вместо 4 — сумма «дробления» занижается.
+    splits = []
+    by_party = {}
+    for o in dated:
+        if o["debit"] and o["party"]:
+            by_party.setdefault(o["party"], []).append(o)
+    for party, items in by_party.items():
+        items.sort(key=lambda x: x["date"])
+        i = 0
+        while i < len(items):
+            group = [items[i]]
+            j = i + 1
+            while j < len(items) and (items[j]["date"] - group[0]["date"]).days <= SPLIT_WINDOW_DAYS:
+                group.append(items[j])
+                j += 1
+            if len(group) >= SPLIT_MIN_PAYMENTS:
+                splits.append({"party": party,
+                               "rows": [g["row"] for g in group],
+                               "total": round(sum(g["debit"] for g in group), 2),
+                               "from": group[0]["date"].isoformat(),
+                               "to": group[-1]["date"].isoformat()})
+                i = j
+            else:
+                i += 1
+    split_rows = {r for s in splits for r in s["rows"]}
+    for s in splits[:10]:
+        same_day = s["from"] == s["to"]
+        add("payment-splitting", "warn",
+            f"«{s['party']}» — платежей: {len(s['rows'])}, "
+            + (f"все {s['from']}" if same_day else f"за {s['from']}–{s['to']}")
+            + f", на {_money(s['total'])} (строки {', '.join(map(str, s['rows']))}). "
+              f"Похоже на дробление — гипотеза, требует проверки: у дробления бывают "
+              f"законные причины (лимиты банка, разные счета-фактуры, график поставок)",
+            [_addr(sheet_name, s["rows"][0], cols.get("date", 0))],
+            {"count": len(s["rows"]), "total": s["total"]})
+
+    # --- дубли: одна дата + одна сумма + один контрагент
+    # Строки, уже объяснённые флагом дробления, повторно как «дубли» не подаём —
+    # иначе одно явление даёт четыре флага и юрист перестаёт их читать.
+    seen, duplicates, suppressed = {}, [], 0
+    for o in ops:
+        key = (o["date"], o["debit"], o["credit"], o["party"])
+        if o["date"] is None or (o["debit"] is None and o["credit"] is None):
+            continue
+        if key in seen:
+            pair = [seen[key], o["row"]]
+            if all(r in split_rows for r in pair):
+                suppressed += 1
+                continue
+            duplicates.append({"rows": pair, "amount": o["debit"] or o["credit"],
+                               "party": o["party"]})
+        else:
+            seen[key] = o["row"]
+    for d in duplicates[:10]:
+        add("duplicate-operation", "warn",
+            f"строки {d['rows'][0]} и {d['rows'][1]}: одинаковые дата, сумма "
+            f"({_money(d['amount'])}) и контрагент — либо дубль в выписке, либо два "
+            f"действительно одинаковых платежа. Проверьте перед использованием суммы",
+            [_addr(sheet_name, r, cols.get("date", 0)) for r in d["rows"]])
+    if len(duplicates) > 10:
+        add("duplicate-operation-many", "warn",
+            f"совпадающих операций всего {len(duplicates)} — показаны первые 10", [],
+            {"duplicates": len(duplicates)})
+    if suppressed:
+        add("duplicate-in-splitting", "info",
+            f"ещё {suppressed} совпадающих операций входят в группы, отмеченные как "
+            f"возможное дробление, — отдельными флагами не дублируются", [],
+            {"suppressed": suppressed})
+
+    # --- крупнейшие получатели (куда ушли деньги)
+    top = sorted(({"party": p,
+                   "debit_total": round(sum(o["debit"] or 0 for o in items), 2),
+                   "operations": len(items),
+                   "rows": [o["row"] for o in items[:5]]}
+                  for p, items in by_party.items()),
+                 key=lambda x: x["debit_total"], reverse=True)[:TOP_PARTIES]
+
+    # --- разрыв по датам: подозрение на неполноту, когда остатка в выписке нет
+    date_gaps = []
+    if dated and not balance_check["checked"]:
+        dated.sort(key=lambda o: o["date"])
+        for prev, cur in zip(dated, dated[1:]):
+            gap_days = (cur["date"] - prev["date"]).days
+            if gap_days >= 31:
+                date_gaps.append({"rows": [prev["row"], cur["row"]], "days": gap_days,
+                                  "from": prev["date"].isoformat(),
+                                  "to": cur["date"].isoformat()})
+        for g in date_gaps[:5]:
+            add("date-gap", "info",
+                f"между {g['from']} и {g['to']} нет операций ({g['days']} дн., строки "
+                f"{g['rows'][0]}–{g['rows'][1]}). Само по себе не дефект, но проверьте, "
+                f"полна ли выписка: колонки остатка в ней нет, поэтому машинно "
+                f"подтвердить полноту невозможно",
+                [_addr(sheet_name, g["rows"][1], cols.get("date", 0))],
+                {"gap_days": g["days"]})
+
+    # --- итоговая строка против суммы операций
+    totals = {"stated_total": None, "stated_total_row": None, "delta": None,
+              "compared_against": None}
+    for i, row in enumerate(rows):
+        joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
+        if any(m in joined for m in ("итого", "всего", "оборот за период")):
+            for key, ref in (("debit", turnover["debit_total"]),
+                             ("credit", turnover["credit_total"])):
+                if key in cols:
+                    val = _num(row[cols[key]] if cols[key] < len(row) else None)
+                    if val is None:
+                        continue
+                    totals.update({"stated_total": val,
+                                   "stated_total_row": header_row1 + 1 + i,
+                                   "compared_against": key,
+                                   "delta": round(val - ref, 2)})
+                    if not _close(val, ref, tolerance):
+                        add("total-mismatch", "error",
+                            f"итог по колонке «{headers[cols[key]]}» в таблице "
+                            f"{_money(val)}, сумма операций {_money(ref)}, расхождение "
+                            f"{_money_signed(val - ref)}",
+                            [_addr(sheet_name, header_row1 + 1 + i, cols[key])],
+                            {"stated": val, "computed": ref})
+                    break
+            break
+
+    return {"columns": {k: _col_letter(v) for k, v in cols.items()},
+            "turnover": turnover, "balance_check": balance_check,
+            "duplicates": duplicates[:50], "splitting": splits[:50],
+            "top_parties": top, "date_gaps": date_gaps[:50],
+            "totals": totals, "findings": findings, "rows": []}
+
+
+PROFILES = {"debt-calc": profile_debt_calc, "statement": profile_statement}
 
 
 def selftest() -> int:
@@ -500,6 +765,23 @@ def selftest() -> int:
     w2.append([None, None, None, None, "ИТОГО", round(total, 2)])
     ok_path = os.path.join(tmp, "ok.xlsx"); wb2.save(ok_path)
 
+    # 3) выписка: скрытые операции (разрыв остатка) + дробление + занижённый итог
+    wb3 = Workbook(); w3 = wb3.active; w3.title = "Обороты"
+    w3.append(["АО «Банк»"]); w3.append(["Выписка по счёту"]); w3.append([])
+    w3.append(["Дата", "Контрагент", "Назначение", "Приход", "Списание", "Остаток"])
+    bal = 5000000.0
+    ledger = [(dt.date(2026, 2, 3), 'ООО "Поставщик"', None, 300000.0)]
+    ledger += [(dt.date(2026, 2, 10 + (i // 3)), 'ООО "Ромашка"', None, 400000.0)
+               for i in range(4)]                                    # дробление
+    for date, party, credit, debit in ledger:
+        bal += (credit or 0) - (debit or 0)
+        w3.append([date, party, "оплата", credit, debit, round(bal, 2)])
+    bal -= 2000000.0                                                 # скрытые операции
+    w3.append([dt.date(2026, 3, 1), 'ООО "Прочий"', "возврат", None, 100000.0,
+               round(bal - 100000, 2)])
+    w3.append([None, None, "ИТОГО", None, 1000000.0, None])          # итог занижен
+    st_path = os.path.join(tmp, "statement.xlsx"); wb3.save(st_path)
+
     for path, expect_codes, expect_errors in (
             (bad_path, {"period-overlap", "days-mismatch", "row-arithmetic", "total-mismatch"}, 5),
             (ok_path, set(), 0)):
@@ -515,6 +797,23 @@ def selftest() -> int:
         else:
             print(f"SELFTEST [{tag}] ✓ коды {sorted(codes) or '—'}, ошибок {errors}"
                   + (f", формула «{res['formula']['label']}»" if res.get("formula") else ""))
+
+    # профиль statement
+    name, headers, rows, hdr = load_sheet(st_path)
+    res = profile_statement(name, headers, rows, hdr, DEFAULT_TOLERANCE)
+    codes = {f["code"] for f in res["findings"] if f["severity"] == "error"}
+    expect = {"balance-break", "total-mismatch"}
+    split_groups = len(res["splitting"])
+    split_size = max((len(s["rows"]) for s in res["splitting"]), default=0)
+    if codes != expect or split_groups != 1 or split_size != 4:
+        ok_all = False
+        print(f"SELFTEST [statement] ✗ ожидались {sorted(expect)} и одна группа дробления "
+              f"из 4 платежей; получено {sorted(codes)}, групп {split_groups}, "
+              f"максимальная {split_size}")
+    else:
+        gap = res["balance_check"]["breaks"][0]["gap"]
+        print(f"SELFTEST [statement] ✓ коды {sorted(codes)}, скрытых операций на "
+              f"{_money(gap)}, дробление: 1 группа из 4 платежей")
 
     print("SELFTEST:", "ВСЁ ЗЕЛЁНОЕ" if ok_all else "ЕСТЬ ОТКАЗЫ")
     return 0 if ok_all else 1
