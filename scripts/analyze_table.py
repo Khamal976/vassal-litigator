@@ -1449,6 +1449,19 @@ def selftest() -> int:
     tmp = tempfile.mkdtemp(prefix="analyze_table_selftest_")
     ok_all = True
 
+    # README предлагает эту команду как проверку зависимостей плагина — значит
+    # проверять надо все четыре, а не только openpyxl, которым пользуется сам тест.
+    print("Зависимости плагина:")
+    for dep, module in (("PyYAML", "yaml"), ("pymupdf", "fitz"),
+                        ("python-docx", "docx"), ("openpyxl", "openpyxl")):
+        try:
+            mod = __import__(module)
+            print(f"  OK   {dep} ({getattr(mod, '__version__', '?')})")
+        except ImportError as exc:
+            ok_all = False
+            print(f"  FAIL {dep}: {dependency_hint(dep, exc).splitlines()[0]}")
+    print()
+
     # 1) расчёт с четырьмя подставленными дефектами
     wb = Workbook(); ws = wb.active; ws.title = "Расчёт"
     ws.append(["Расчёт неустойки"]); ws.append([])
