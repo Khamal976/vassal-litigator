@@ -59,13 +59,35 @@ git clone https://github.com/YOUR_USERNAME/vassal-litigator.git
 
 ### 2. Установите зависимости
 
+**Linux / Cowork:**
+
 ```bash
 cd vassal-litigator
 chmod +x scripts/setup.sh
 ./scripts/setup.sh
 ```
 
-Скрипт установит: `tesseract-ocr` (для OCR), а также Python-пакеты `python-docx`, `openpyxl`, `pymupdf`.
+**Windows (PowerShell):** `setup.sh` — bash-скрипт и в PowerShell не исполняется, поэтому для Windows отдельный установщик:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+Либо вручную одной строкой:
+
+```bash
+python -m pip install PyYAML pymupdf python-docx openpyxl
+```
+
+Скрипт установит Python-пакеты `PyYAML`, `pymupdf`, `python-docx`, `openpyxl` (в Linux-версии дополнительно, best-effort — `tesseract-ocr` для опциональной спот-сверки; основной путь OCR — vision).
+
+**Проверка, что зависимости действительно доступны** (проверяется импортом, а не сообщением менеджера пакетов):
+
+```bash
+python scripts/analyze_table.py --selftest
+```
+
+⚠️ На Windows вызывайте `python`, а не `python3`: последний часто оказывается заглушкой Windows, ведущей на другую сборку без зависимостей. Подробное правило — `shared/conventions.md` → «Единый паттерн feature detection + fallback», п. 0.
 
 ### 3. Глобальная память (рекомендуется задать сразу)
 
@@ -143,7 +165,8 @@ vassal-litigator/
 │   ├── index-schema.yaml
 │   └── mirror-template.md
 ├── scripts/                  # Утилиты
-│   ├── setup.sh
+│   ├── setup.sh                 # Linux/Cowork
+│   ├── setup.ps1                # Windows (PowerShell)
 │   ├── extract_text.py
 │   ├── tessdata/             # Вендоренный rus.traineddata для OCR
 │   ├── notion-init.md
