@@ -113,22 +113,62 @@ def detect_columns(headers: list, rows: list) -> dict:
 
 
 def _num(value):
-    """Число из ячейки. Текстовые «1 234,56 ₽» и неразрывные пробелы — тоже числа.
+    """Число из ячейки. Суммы, сохранённые как текст, — обычное дело для выгрузок.
 
-    Без этого суммы, сохранённые как текст (обычное дело для выгрузок), молча
-    станут нулями — а нуль в расчёте выглядит как «сошлось».
+    Разделитель определяется, а не угадывается. Прежняя версия вырезала точку как
+    символ валюты (точка внутри класса символов литеральна), из-за чего «1500000.75»
+    превращалось в 150 000 075, а ставка «8.5» — в 85 %. Дефект был тем опаснее, что
+    при единообразно отформатированной колонке все цифры завышались согласованно:
+    расхождений не возникало, и юрист получал «машинно точную» сумму.
+
+    Поддержано: «1 200 000,00 руб.» (в т.ч. NBSP и narrow NBSP) · «1500000.75» ·
+    «1,234.56» (US) · «1.200.000,00» (EU) · «12 %» · «(500)» как -500 (бухгалтерская
+    запись отрицательного) · типографский минус U+2212.
     """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return float(value)
-    s = str(value)
-    s = s.replace(" ", " ").replace(" ", " ")
-    s = re.sub(r"[₽руб.\s]", "", s, flags=re.IGNORECASE)
-    s = s.replace(",", ".")
-    if not re.fullmatch(r"-?\d+(\.\d+)?%?", s or ""):
+
+    s = str(value).strip()
+    if not s:
         return None
-    return float(s.rstrip("%"))
+
+    s = s.replace(" ", " ").replace(" ", " ").replace("−", "-")
+    negative_parens = bool(re.fullmatch(r"\(\s*[^)]+\s*\)", s))
+    if negative_parens:
+        s = s[1:-1].strip()
+
+    s = s.replace("%", "")
+    s = re.sub(r"(руб\.?|коп\.?|₽|р\.)", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("'", "").replace("’", "")
+
+    negative = s.startswith("-")
+    s = s.lstrip("+-")
+    if not s or not re.fullmatch(r"[\d.,]+", s):
+        return None
+
+    has_dot, has_comma = "." in s, "," in s
+    if has_dot and has_comma:
+        dec = "." if s.rfind(".") > s.rfind(",") else ","
+        s = s.replace("," if dec == "." else ".", "").replace(dec, ".")
+    elif has_comma or has_dot:
+        sep = "," if has_comma else "."
+        parts = s.split(sep)
+        thousands = len(parts) > 2 and all(len(p) == 3 for p in parts[1:])
+        if thousands:
+            s = "".join(parts)
+        else:
+            s = parts[0] + "." + "".join(parts[1:])
+
+    try:
+        result = float(s)
+    except ValueError:
+        return None
+    if negative or negative_parens:
+        result = -result
+    return result
 
 
 def _as_date(value):
@@ -186,12 +226,58 @@ def _formula_models(anchor_date):
     ]
 
 
+_REL_TOLERANCE_ACTIVE = REL_TOLERANCE
+
+
 def _close(a, b, tolerance):
+    """Сходятся ли суммы. Относительный допуск отключается явным --tolerance.
+
+    Прежде стояло max(абсолютный, относительный) — из-за чего уменьшить допуск ключом
+    было невозможно, и на реестре в 220 млн ₽ проглатывалось расхождение в миллион
+    (0,5 % = 1,1 млн). Теперь: --tolerance задан → работает только он.
+    """
     if a is None or b is None:
         return False
-    return abs(a - b) <= max(tolerance, abs(b) * REL_TOLERANCE)
+    limit = tolerance if _REL_TOLERANCE_ACTIVE is None else max(
+        tolerance, abs(b) * _REL_TOLERANCE_ACTIVE)
+    return abs(a - b) <= limit
 
 
+
+
+TOTAL_ROW_MARKERS = ("итого", "всего", "итог", "оборот за период", "к оплате всего")
+
+
+def _is_total_row(row: list) -> bool:
+    """Строка-итог (в т.ч. промежуточный «Итого за I квартал»).
+
+    Профили обязаны исключать такие строки из данных: иначе итог входит в сумму
+    операций, оборот удваивается, и сверка «итог против суммы» даёт расхождение,
+    ровно равное верному итогу (поймано состязательной проверкой 2026-07-30).
+    """
+    joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
+    return bool(joined) and any(m in joined for m in TOTAL_ROW_MARKERS)
+
+
+def _find_total_rows(rows: list, header_row1: int, amount_col: int):
+    """Все строки-итоги с их значениями → (список, итоговая_строка_или_None).
+
+    Общим итогом считается ПОСЛЕДНЯЯ такая строка: промежуточные («Итого за
+    I квартал») стоят выше. Если их несколько, профиль обязан сказать об этом —
+    сравнивать сумму всех строк с первым попавшимся «итого» нельзя.
+    """
+    found = []
+    for i, row in enumerate(rows):
+        if not _is_total_row(row):
+            continue
+        val = _num(row[amount_col]) if amount_col is not None and amount_col < len(row) else None
+        found.append({"row": header_row1 + 1 + i, "value": val, "index": i})
+    grand = None
+    for item in reversed(found):
+        if item["value"] is not None:
+            grand = item
+            break
+    return found, grand
 
 
 def _plural(n: int, one: str, few: str, many: str) -> str:
@@ -259,7 +345,7 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
               "приведите шапку к обычным названиям (сумма долга / ставка / дней / пени).")
 
     # собираем строки данных
-    data = []
+    data, skipped_total_rows = [], 0
     for i, row in enumerate(rows):
         if i <= 0 and not row:
             continue
@@ -271,9 +357,13 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
             rec[key + "_num"] = _num(raw)
             if key in ("date_from", "date_to"):
                 rec[key + "_date"] = _as_date(raw)
-        # строка считается расчётной, если есть база и итог
-        if rec.get("base_num") is not None and rec.get("amount_num") is not None:
+        # строка считается расчётной, если есть база и итог И это не строка-итог:
+        # иначе «ИТОГО | 1 000 000 | | | 30 000» войдёт в сумму строк дважды
+        if (rec.get("base_num") is not None and rec.get("amount_num") is not None
+                and not _is_total_row(row)):
             data.append(rec)
+        if _is_total_row(row):
+            skipped_total_rows += 1
 
     # --- выбор модели формулы
     anchor = next((r.get("date_from_date") for r in data if r.get("date_from_date")), None)
@@ -405,15 +495,17 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
     if data and "amount" in cols:
         rows_sum = sum(r["amount_num"] for r in data)
         totals["rows_sum"] = round(rows_sum, 2)
-        # ищем итоговую строку ниже данных
-        for i, row in enumerate(rows):
-            joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
-            if any(m in joined for m in ("итого", "всего", "итог")):
-                val = _num(row[cols["amount"]] if cols["amount"] < len(row) else None)
-                if val is not None:
-                    totals["stated_total"] = val
-                    totals["stated_total_row"] = header_row1 + 1 + i
-                    break
+        # итог — ПОСЛЕДНЯЯ строка-итог; промежуточные стоят выше
+        all_totals, grand = _find_total_rows(rows, header_row1, cols["amount"])
+        if len(all_totals) > 1:
+            add("intermediate-totals", "info",
+                f"строк с пометкой «итого/всего» найдено {len(all_totals)} "
+                f"(строки {', '.join(str(t['row']) for t in all_totals)}). За общий итог "
+                f"взята последняя; если это не так, укажите нужную строку",
+                [], {"rows": [t["row"] for t in all_totals]})
+        if grand:
+            totals["stated_total"] = grand["value"]
+            totals["stated_total_row"] = grand["row"]
         if totals["stated_total"] is not None:
             delta = totals["stated_total"] - rows_sum
             totals["delta"] = round(delta, 2)
@@ -467,24 +559,90 @@ def _anchor_from_case(case_path: str):
     try:
         import yaml
     except ImportError:
-        return None, None
+        return None, None, ("PyYAML не установлен — прочитать case.yaml нечем; "
+                            "передайте дату ключом --case-opened")
     try:
         with open(case_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-    except Exception:
-        return None, None
+    except Exception as exc:
+        return None, None, f"case.yaml не прочитан: {exc}"
     node = (data.get("case") or {}).get("bankruptcy") or {}
+    if "case_opened_date" not in node:
+        return None, None, ("в case.yaml нет поля case.bankruptcy.case_opened_date "
+                            "(блок bankruptcy заполняется только для банкротных дел)")
     value = node.get("case_opened_date")
-    date = _as_date(value) if value else None
-    return date, (f"case.yaml → case.bankruptcy.case_opened_date = {value}" if date else None)
+    if not value:
+        return None, None, ("поле case.bankruptcy.case_opened_date пусто — дату принятия "
+                            "заявления надо внести в карточку дела")
+    date = _as_date(value)
+    if date is None:
+        return None, None, f"значение case_opened_date «{value}» не распознано как дата"
+    return date, f"case.yaml → case.bankruptcy.case_opened_date = {value}", None
+
+
+def check_stale_formulas(path: str, sheet: str = None):
+    """Формулы без сохранённых значений — та же ловушка, что проверяет приём.
+
+    Аналитическая нога обязана проверять её самостоятельно: юрист может запустить
+    разбор по файлу, который через приём не проходил. Без этого расчёт из 1С, где
+    колонка суммы — формулы без кэша, даёт `findings: []` и `errors: 0` (все строки
+    молча отброшены), то есть «сошлось» на нечитаемом файле.
+    """
+    try:
+        from extract_text import _count_stale_formulas
+        from openpyxl import load_workbook
+        wb = load_workbook(path, data_only=True, read_only=True, keep_links=False)
+        names = [sheet] if sheet else wb.sheetnames
+        try:
+            wb.close()
+        except Exception:
+            pass
+        return _count_stale_formulas(path, names)
+    except Exception:
+        return {"formulas": 0, "stale": 0, "checked": False, "examples": []}
+
+
+def _load_csv(path: str):
+    """CSV читается ногой напрямую: приём обещает «итоги по массиву — через
+    analyze_table.py», а ветки csv здесь не было вовсе (openpyxl падал «not a zip»)."""
+    import csv as _csv
+    raw = None
+    for encoding in ("utf-8-sig", "cp1251"):
+        try:
+            with open(path, "r", encoding=encoding, newline="") as f:
+                raw = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+    if raw is None:
+        raise ValueError("не удалось прочитать CSV ни в UTF-8, ни в cp1251")
+    try:
+        delimiter = _csv.Sniffer().sniff(raw[:4096], delimiters=";,	|").delimiter
+    except Exception:
+        delimiter = ";" if raw[:4096].count(";") > raw[:4096].count(",") else ","
+    rows = [r for r in _csv.reader(raw.splitlines(), delimiter=delimiter)]
+    while rows and all(not str(c).strip() for c in rows[-1]):
+        rows.pop()
+    return rows
 
 
 def load_sheet(path: str, sheet: str = None):
+    if str(path).lower().endswith(".csv"):
+        rows = _load_csv(path)
+        if not rows:
+            return Path(path).name, [], [], 1
+        width = max(len(r) for r in rows)
+        hdr = _find_header_row(rows)
+        headers = _pad_row([_cell_str(c) for c in rows[hdr]], width)
+        data_rows = [_pad_row(r, width) for r in rows[hdr + 1:]]
+        return Path(path).name, headers, data_rows, hdr + 1
     from openpyxl import load_workbook
     wb = load_workbook(path, data_only=True, read_only=True, keep_links=False)
     try:
-        ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
+        all_sheets = list(wb.sheetnames)
+        ws = wb[sheet] if sheet else wb[all_sheets[0]]
         name = ws.title
+        load_sheet.last_sheets = all_sheets      # для предупреждения в main()
         rows = []
         for n, row in enumerate(ws.iter_rows(values_only=True)):
             if n >= TABLE_MAX_SCAN_ROWS:
@@ -596,6 +754,8 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
             debit, credit = (abs(single), None) if single < 0 else (None, single)
         if date is None and debit is None and credit is None:
             continue
+        if _is_total_row(row):        # «ИТОГО» — не операция: иначе оборот удваивается
+            continue
         ops.append({"row": row1, "date": date, "debit": debit, "credit": credit,
                     "party": _extract_party(rec), "purpose": _cell_str(rec.get("purpose")),
                     "balance": _num(rec.get("balance"))})
@@ -615,9 +775,36 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
     # Если остаток предыдущей строки ± сумма операции ≠ остаток текущей, между ними
     # пропущены операции. Это довод против доказательственной полноты выписки,
     # который иначе не увидеть: по датам «дырки» может не быть вовсе.
-    balance_check = {"checked": False, "breaks": []}
+    balance_check = {"checked": False, "breaks": [], "coverage": None, "skipped_reason": None}
     with_balance = [o for o in ops if o["balance"] is not None]
-    if len(with_balance) >= 3:
+    coverage = (len(with_balance) / len(ops)) if ops else 0
+    balance_check["coverage"] = round(coverage, 3)
+    dates_seq = [o["date"] for o in ops if o["date"]]
+    descending = len(dates_seq) >= 3 and all(a >= b for a, b in zip(dates_seq, dates_seq[1:]))
+
+    # Проверка осмысленна ТОЛЬКО когда остаток стоит почти в каждой строке и строки
+    # идут по возрастанию даты. Иначе цепочка «предыдущий остаток ± эта операция»
+    # рвётся на каждом пропуске, и профиль объявил бы неполной корректную выписку —
+    # утверждение о доказательстве, которое юрист понесёт в суд.
+    if len(with_balance) < 3:
+        balance_check["skipped_reason"] = "остаток указан менее чем в трёх строках"
+    elif coverage < 0.95:
+        balance_check["skipped_reason"] = (
+            f"остаток заполнен лишь в {coverage:.0%} строк — сверка цепочки невозможна "
+            f"(вероятно, сальдо только на конец дня)")
+        add("balance-not-checked", "info",
+            f"Полнота выписки по остатку **не проверялась**: колонка остатка заполнена "
+            f"в {coverage:.0%} строк из {len(ops)}. Это не значит, что выписка полна — "
+            f"значит, машинно подтвердить полноту нечем. Запросите выписку с остатком "
+            f"по каждой операции",
+            [], {"coverage": balance_check["coverage"]})
+    elif descending:
+        balance_check["skipped_reason"] = "строки отсортированы по убыванию даты"
+        add("balance-not-checked", "info",
+            "Выписка отсортирована от новых операций к старым — сверка остатка по "
+            "цепочке в таком порядке невозможна. Отсортируйте по возрастанию даты "
+            "и повторите разбор", [], {})
+    else:
         balance_check["checked"] = True
         for prev, cur in zip(with_balance, with_balance[1:]):
             expected = prev["balance"] + (cur["credit"] or 0) - (cur["debit"] or 0)
@@ -844,6 +1031,7 @@ def _classify_payment(payment: dt.date, anchor: dt.date) -> dict:
 def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=None) -> dict:
     findings = []
     cols = _detect_by_markers(headers, PAYMENT_MARKERS)
+    stats = {"rows_total": len(rows), "rows_used": 0, "rows_skipped": 0}
 
     def add(code, severity, message, cells=None, numbers=None):
         findings.append({"code": code, "severity": severity, "message": message,
@@ -855,6 +1043,13 @@ def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=N
             if sum(1 for v in values if _is_date_like(v)) >= max(2, len(values) // 3):
                 cols["date"] = col
                 break
+
+    missing = [k for k in ("date", "amount") if k not in cols]
+    if missing:
+        add("columns-missing", "error",
+            "Не распознаны обязательные колонки: " + ", ".join(missing)
+            + ". Проверенные заголовки: " + (" | ".join(h for h in headers if h) or "(пусто)")
+            + ". Периоды подозрительности НЕ рассчитаны — это отказ, а не «расхождений нет»")
 
     if anchor is None:
         add("anchor-missing", "error",
@@ -871,8 +1066,13 @@ def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=N
         rec = {key: (row[idx] if idx < len(row) else None) for key, idx in cols.items()}
         date = _as_date(rec.get("date"))
         amount = _num(rec.get("amount"))
-        if date is None or amount is None:
+        if _is_total_row(row):
             continue
+        if date is None or amount is None:
+            if any(not _cell_empty(c) for c in row):
+                stats["rows_skipped"] += 1
+            continue
+        stats["rows_used"] += 1
         item = {"row": row1, "date": date.isoformat(), "amount": amount,
                 "party": _extract_party(rec), "inn": _cell_str(rec.get("inn")),
                 "purpose": _cell_str(rec.get("purpose"))}
@@ -933,7 +1133,15 @@ def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=N
                     f"ошибка в реестре — сверьте по ЕГРЮЛ, прежде чем строить довод",
                     [], {"inn": inn})
 
+    if stats["rows_skipped"]:
+        add("rows-skipped", "warn",
+            f"Пропущено непустых строк: {stats['rows_skipped']} из {stats['rows_total']} "
+            f"(не распознаны дата или сумма). Разобрано: {stats['rows_used']}. "
+            f"Пропущенные платежи в периоды НЕ попали — проверьте формат этих строк",
+            [], dict(stats))
+
     return {"columns": {k: _col_letter(v) for k, v in cols.items()},
+            "stats": stats,
             "anchor": anchor.isoformat() if anchor else None,
             "bounds": ({k: v for k, v in _classify_payment(anchor, anchor)["bounds"].items()}
                        if anchor else None),
@@ -953,6 +1161,28 @@ REGISTRY_MARKERS = {
 }
 
 QUEUE_PATTERN = re.compile(r"(перв|втор|трет|четв|зареестр|текущ)", re.IGNORECASE)
+# Реестры часто пишут очередь цифрой или римской цифрой — «3», «III», «3-я».
+QUEUE_NUMERIC = {"1": "перв", "2": "втор", "3": "трет", "4": "четв",
+                 "i": "перв", "ii": "втор", "iii": "трет", "iv": "четв"}
+
+
+def _parse_queue(raw: str, row_text: str) -> str:
+    """Очередь из ячейки. Числовые формы приводятся к словесным.
+
+    По всей строке ищем только если своей ячейки нет: иначе кредитор
+    «ООО "Первая грузовая"» уезжает в первую очередь (поймано проверкой).
+    """
+    value = (raw or "").strip().lower()
+    if value:
+        m = QUEUE_PATTERN.search(value)
+        if m:
+            return m.group(1).lower()
+        token = re.sub(r"[^0-9ivх]", "", value.replace("х", "x"))
+        if token in QUEUE_NUMERIC:
+            return QUEUE_NUMERIC[token]
+        return "не указана"
+    m = QUEUE_PATTERN.search(row_text or "")
+    return m.group(1).lower() if m else "не указана"
 
 
 def profile_registry(sheet_name, headers, rows, header_row1, tolerance, our=None) -> dict:
@@ -979,9 +1209,7 @@ def profile_registry(sheet_name, headers, rows, header_row1, tolerance, our=None
         joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
         if any(m in joined for m in ("итого", "всего")):
             continue
-        queue_raw = _cell_str(rec.get("queue"))
-        match = QUEUE_PATTERN.search(queue_raw) or QUEUE_PATTERN.search(joined)
-        queue = match.group(1).lower() if match else "не указана"
+        queue = _parse_queue(_cell_str(rec.get("queue")), joined)
         item = {"row": row1, "party": party, "inn": _cell_str(rec.get("inn")),
                 "amount": amount, "penalty": _num(rec.get("penalty")), "queue": queue}
         creditors.append(item)
@@ -1010,22 +1238,57 @@ def profile_registry(sheet_name, headers, rows, header_row1, tolerance, our=None
             our_total = round(sum(c["amount"] or 0 for c in matched), 2)
             ours = {"rows": [c["row"] for c in matched], "total": our_total,
                     "queue": matched[0]["queue"]}
-            # Вес голоса считается по третьей очереди БЕЗ неустоек: финансовые санкции
-            # голосов не дают (п. 3 ст. 12 ФЗ-127) — иначе доля завышается.
+            # Вес голоса считается по третьей очереди без финансовых санкций
+            # (правила ст. 12 ФЗ-127). КЛЮЧЕВОЕ: вычитать неустойку можно только если
+            # она входит в колонку суммы. Если колонка называется «Основной долг», а
+            # неустойка стоит отдельно, вычитание занижает долю — на боевых числах это
+            # 22,73 % вместо 25 %, то есть «блокирующего пакета нет» вместо «есть».
             third = queues.get("трет")
+            amount_header = headers[cols["amount"]] if "amount" in cols else ""
+            amount_is_principal = bool(re.search(
+                r"основн|тело|долг(?!.*требован)", (amount_header or "").lower()))
+            has_penalty_col = "penalty" in cols
             if third and third["total"]:
-                base = round(third["total"] - third["penalty"], 2) or third["total"]
-                our_base = round(our_total - sum(c["penalty"] or 0 for c in matched), 2)
-                share = round(our_base / base * 100, 2) if base else None
-                ours.update({"voting_base": base, "our_voting_amount": our_base,
-                             "share_percent": share})
-                if share is not None:
+                if has_penalty_col and not amount_is_principal:
+                    base = round(third["total"] - third["penalty"], 2)
+                    our_base = round(our_total - sum(c["penalty"] or 0 for c in matched), 2)
+                    basis = ("из суммы требований вычтены неустойки "
+                             f"(колонка «{amount_header}» их включает)")
+                elif has_penalty_col:
+                    base, our_base = third["total"], our_total
+                    basis = (f"колонка «{amount_header}» — основной долг, санкции учтены "
+                             f"отдельной колонкой и в базу не входят")
+                else:
+                    base, our_base = third["total"], our_total
+                    basis = ("⚠️ колонка неустоек НЕ найдена — если санкции включены в "
+                             "сумму требований, доля ЗАВЫШЕНА; проверьте состав требований")
+                if base <= 0:
+                    add("voting-base-empty", "warn",
+                        f"База голосов по третьей очереди равна {_money(base)} — "
+                        f"голосующих требований нет либо очередь состоит только из "
+                        f"санкций. Долю не считаю: результат был бы бессмысленным",
+                        [], {"base": base})
+                elif our_base < 0:
+                    add("voting-base-negative", "warn",
+                        f"У нашего требования неустойка ({_money(our_total - our_base)}) "
+                        f"больше суммы в колонке «{amount_header}» ({_money(our_total)}). "
+                        f"Похоже, колонки распознаны неверно — долю не считаю",
+                        [], {"our_total": our_total, "our_base": our_base})
+                else:
+                    share = round(our_base / base * 100, 2)
+                    ours.update({"voting_base": base, "our_voting_amount": our_base,
+                                 "share_percent": share, "basis": basis})
                     add("voting-share", "info",
                         f"Доля нашего требования в третьей очереди: {share} % "
-                        f"({_money(our_base)} из {_money(base)}). Считано БЕЗ неустоек и "
-                        f"санкций — они голосов не дают. Порог блокировки решений — "
-                        f"более 25 %, единоличного контроля собрания — более 50 %",
+                        f"({_money(our_base)} из {_money(base)}). Как считано: {basis}. "
+                        f"Пороги: более 25 % — блокировка решений, более 50 % — контроль "
+                        f"собрания. Состав требований сверьте по определению о включении",
                         [], {"share_percent": share})
+            else:
+                add("third-queue-missing", "warn",
+                    "Третья очередь в реестре не распознана — доля голоса не посчитана. "
+                    "Проверьте колонку очереди: реестры пишут её и словом, и цифрой, и "
+                    "римской цифрой", [], {})
 
     # дубли кредиторов и расхождения ИНН/наименования
     by_inn = {}
@@ -1216,17 +1479,54 @@ def selftest() -> int:
     res = profile_registry(name, headers, rows, hdr, DEFAULT_TOLERANCE, our="Наш клиент")
     ours = res.get("ours") or {}
     dup = [f for f in res["findings"] if f["code"] == "creditor-duplicate"]
-    # Арифметика ожидания (считана вручную по фикстуре, чтобы тест проверял код,
-    # а не повторял его): третья очередь = 50 + 120 + 30 + 20 = 220 млн долга,
-    # неустоек 10 + 5 = 15 млн. База голосов = 220 − 15 = 205 млн. Наше без
-    # неустойки = 50 − 10 = 40 млн. Доля = 40 / 205 = 19,51 %.
-    if round(ours.get("share_percent") or 0, 2) != 19.51 or len(dup) != 1:
+    # Арифметика ожидания — считана по НОРМЕ, а не по модели кода (прежнее ожидание
+    # 19,51 % воспроизводило дефект: неустойка вычиталась из колонки, которая её не
+    # включает). Колонка суммы здесь — «Основной долг», санкции стоят отдельно, значит
+    # база = 50 + 120 + 30 + 20 = 220 млн, наше = 50 млн, доля = 50/220 = 22,73 %.
+    if round(ours.get("share_percent") or 0, 2) != 22.73 or len(dup) != 1:
         ok_all = False
-        print(f"SELFTEST [registry] ✗ ожидалась доля 19.51 % (без неустоек) и один дубль ИНН; "
-              f"получено {ours.get('share_percent')} %, дублей {len(dup)}")
+        print(f"SELFTEST [registry/основной долг] ✗ ожидалась доля 22.73 % и один дубль "
+              f"ИНН; получено {ours.get('share_percent')} %, дублей {len(dup)}")
     else:
-        print(f"SELFTEST [registry] ✓ доля голоса {ours['share_percent']} % без неустоек, "
-              f"дубль ИНН найден")
+        print(f"SELFTEST [registry/основной долг] ✓ доля {ours['share_percent']} % — "
+              f"неустойка НЕ вычтена (колонка её не включает), дубль ИНН найден")
+
+    # Второй случай той же нормы: колонка «Сумма требования» неустойку ВКЛЮЧАЕТ —
+    # тогда вычитать обязательно. Без этой фикстуры регресс в обратную сторону не виден.
+    wb6 = Workbook(); w6 = wb6.active; w6.title = "Реестр"
+    w6.append(["Кредитор", "ИНН", "Очередь", "Сумма требования", "в т.ч. неустойка"])
+    for party, inn, queue, total_claim, penalty in (
+            ('ООО "Наш клиент"', "7701111111", "3", 60000000.0, 10000000.0),
+            ('ПАО "Банк"', "7702222222", "III", 140000000.0, 0.0),
+            ('ФНС России', "7703333333", "третья", 35000000.0, 5000000.0)):
+        w6.append([party, inn, queue, total_claim, penalty])
+    incl_path = os.path.join(tmp, "registry_incl.xlsx"); wb6.save(incl_path)
+
+    name, headers, rows, hdr = load_sheet(incl_path)
+    res = profile_registry(name, headers, rows, hdr, DEFAULT_TOLERANCE, our="Наш клиент")
+    ours2 = res.get("ours") or {}
+    # база = (60+140+35) − (10+0+5) = 220 млн; наше = 60 − 10 = 50 млн → 22,73 %
+    # плюс проверяем, что очередь распознана из «3» и «III», а не только из слова
+    third = (res.get("queues") or {}).get("трет") or {}
+    if round(ours2.get("share_percent") or 0, 2) != 22.73 or third.get("count") != 3:
+        ok_all = False
+        print(f"SELFTEST [registry/сумма требования] ✗ ожидалась доля 22.73 % и три "
+              f"кредитора в третьей очереди; получено {ours2.get('share_percent')} %, "
+              f"кредиторов {third.get('count')}")
+    else:
+        print(f"SELFTEST [registry/сумма требования] ✓ доля {ours2['share_percent']} % — "
+              f"неустойка вычтена; очередь распознана из «3»/«III»/слова")
+
+    # statement: оборот не должен включать строку «ИТОГО»
+    name, headers, rows, hdr = load_sheet(st_path)
+    res_st = profile_statement(name, headers, rows, hdr, DEFAULT_TOLERANCE)
+    debit = res_st["turnover"]["debit_total"]
+    if abs(debit - 2000000.0) > 0.01:
+        ok_all = False
+        print(f"SELFTEST [statement/оборот] ✗ списание должно быть 2 000 000 (5 операций), "
+              f"получено {debit} — вероятно, строка «ИТОГО» посчитана операцией")
+    else:
+        print("SELFTEST [statement/оборот] ✓ строка «ИТОГО» операцией не считается")
 
     print("SELFTEST:", "ВСЁ ЗЕЛЁНОЕ" if ok_all else "ЕСТЬ ОТКАЗЫ")
     return 0 if ok_all else 1
@@ -1258,7 +1558,15 @@ def main():
 
     profile = opt("--profile", "debt-calc")
     sheet = opt("--sheet")
-    tolerance = float(opt("--tolerance", DEFAULT_TOLERANCE))
+    global _REL_TOLERANCE_ACTIVE
+    if "--tolerance" in argv:
+        _REL_TOLERANCE_ACTIVE = None        # явный допуск отключает относительный
+    try:
+        tolerance = float(str(opt("--tolerance", DEFAULT_TOLERANCE)).replace(",", "."))
+    except ValueError:
+        print(json.dumps({"error": "--tolerance: ожидается число, например 1 или 0.5"},
+                         ensure_ascii=False))
+        return 2
 
     if profile not in PROFILES:
         print(json.dumps({"error": f"неизвестный профиль: {profile}",
@@ -1281,12 +1589,17 @@ def main():
         return 0
 
     extra = {}
+    anchor_problem = None
     if profile == "payments":
-        anchor = _as_date(opt("--case-opened"))
+        raw_opened = opt("--case-opened")
+        anchor = _as_date(raw_opened)
+        if raw_opened and anchor is None:
+            anchor_problem = (f"--case-opened «{raw_opened}» не распознан как дата; "
+                              f"формат ГГГГ-ММ-ДД или ДД.ММ.ГГГГ")
         case_path = opt("--case")
         anchor_source = "--case-opened" if anchor else None
         if anchor is None and case_path:
-            anchor, anchor_source = _anchor_from_case(case_path)
+            anchor, anchor_source, anchor_problem = _anchor_from_case(case_path)
         extra["anchor"] = anchor
         result_anchor_source = anchor_source
     elif profile == "registry":
@@ -1298,6 +1611,38 @@ def main():
     result = PROFILES[profile](name, headers, rows, header_row1, tolerance, **extra)
     if result_anchor_source:
         result["anchor_source"] = result_anchor_source
+    if anchor_problem:
+        result.setdefault("findings", []).insert(0, {
+            "code": "anchor-source-failed", "severity": "error",
+            "message": f"Дата принятия заявления передана, но не прочитана: {anchor_problem}. "
+                       f"Это НЕ «дата не задана» — исправьте ввод и повторите",
+            "cells": [], "numbers": {}})
+
+    # Формулы без сохранённых значений — проверяем и здесь (юрист мог запустить ногу
+    # по файлу, не проходившему через приём).
+    if not str(path).lower().endswith(".csv"):
+        stale = check_stale_formulas(path, sheet)
+        result["stale_formulas"] = stale
+        if stale.get("stale"):
+            where = ", ".join(f"«{e['sheet']}» стр. {e['row']}"
+                              for e in stale["examples"][:3])
+            result.setdefault("findings", []).insert(0, {
+                "code": "stale-formulas", "severity": "error",
+                "message": f"В файле {stale['stale']} ячеек с формулами БЕЗ сохранённых "
+                           f"значений ({where}). Прочитанным суммам верить нельзя: в Excel "
+                           f"они видны, в файле их нет. Откройте файл, пересохраните и "
+                           f"повторите разбор. Всё посчитанное ниже — недостоверно",
+                "cells": [], "numbers": {"stale": stale["stale"]}})
+
+    # Разбирается ОДИН лист; если их несколько — сказать прямо.
+    sheets_seen = getattr(load_sheet, "last_sheets", None)
+    if sheets_seen and len(sheets_seen) > 1 and not sheet:
+        result.setdefault("findings", []).append({
+            "code": "single-sheet-analyzed", "severity": "warn",
+            "message": f"В файле {len(sheets_seen)} листов ({', '.join(sheets_seen)}), "
+                       f"разобран только «{name}». Итог относится к нему одному — "
+                       f"для остальных запустите с --sheet",
+            "cells": [], "numbers": {"sheets": len(sheets_seen)}})
     result.update({"profile": profile, "sheet": name, "file": Path(path).name,
                    "header_row": header_row1,
                    "errors": sum(1 for f in result["findings"] if f["severity"] == "error")})

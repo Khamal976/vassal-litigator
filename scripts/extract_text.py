@@ -1043,7 +1043,12 @@ def extract_xlsx_structure(filepath: str) -> dict:
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
-        return _table_error("corrupt", False, dependency_hint("openpyxl", exc))
+        # НЕ "corrupt": файл исправен, отсутствует библиотека. Иначе в зеркале дела
+        # появляется «файл повреждён», и юрист идёт запрашивать перезалив
+        # доказательства вместо установки зависимости.
+        return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+                "needs_vision": False, "table": None, "error_class": None,
+                "retryable": False, "warnings": [dependency_hint("openpyxl", exc)]}
 
     try:
         wb = load_workbook(filepath, data_only=True, read_only=True, keep_links=False)
@@ -1160,13 +1165,17 @@ def extract_csv_table(filepath: str) -> dict:
                           "fulltext": True}}
 
     hdr_idx = _find_header_row(rows)
+    width = max(len(r) for r in rows)
+    # Выравнивание обязательно и здесь: в .xlsx-ветке пустые ячейки сохраняются
+    # (иначе значения съезжают влево), а CSV-ветка это правило теряла — итог
+    # «Итого;;;;1 000 000» печатался под шапкой «Контрагент».
     sheet = {
         "name": Path(filepath).name, "state": "visible", "rows": len(rows),
-        "cols": max(len(r) for r in rows), "header_row": hdr_idx + 1,
-        "headers": [c.strip() for c in rows[hdr_idx]],
-        "sample": [[c.strip() for c in r]
+        "cols": width, "header_row": hdr_idx + 1,
+        "headers": _pad_row([c.strip() for c in rows[hdr_idx]], width),
+        "sample": [_pad_row([c.strip() for c in r], width)
                    for r in rows[hdr_idx + 1: hdr_idx + 1 + TABLE_SAMPLE_ROWS]],
-        "totals": [{"row": i + 1, "cells": [c.strip() for c in r if c.strip()]}
+        "totals": [{"row": i + 1, "cells": _pad_row([c.strip() for c in r], width)}
                    for i, r in enumerate(rows)
                    if i > hdr_idx
                    and any(m in " ".join(r).lower() for m in TABLE_TOTAL_MARKERS)][:20],
