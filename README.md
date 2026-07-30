@@ -14,7 +14,7 @@
 
 **Обжалование** — подготовка апелляционных и кассационных жалоб с систематическим поиском оснований по АПК/ГПК РФ, проект судебного решения с учётом стиля конкретного судьи.
 
-## Скиллы (23)
+## Скиллы (24)
 
 | Фаза | Скилл | Описание |
 |------|-------|----------|
@@ -59,13 +59,35 @@ git clone https://github.com/YOUR_USERNAME/vassal-litigator.git
 
 ### 2. Установите зависимости
 
+**Linux / Cowork:**
+
 ```bash
 cd vassal-litigator
 chmod +x scripts/setup.sh
 ./scripts/setup.sh
 ```
 
-Скрипт установит: `tesseract-ocr` (для OCR), а также Python-пакеты `python-docx`, `openpyxl`, `pymupdf`.
+**Windows (PowerShell):** `setup.sh` — bash-скрипт и в PowerShell не исполняется, поэтому для Windows отдельный установщик:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+Либо вручную одной строкой:
+
+```bash
+python -m pip install PyYAML pymupdf python-docx openpyxl
+```
+
+Скрипт установит Python-пакеты `PyYAML`, `pymupdf`, `python-docx`, `openpyxl` (в Linux-версии дополнительно, best-effort — `tesseract-ocr` для опциональной спот-сверки; основной путь OCR — vision).
+
+**Проверка, что зависимости действительно доступны** (проверяется импортом, а не сообщением менеджера пакетов):
+
+```bash
+python scripts/analyze_table.py --selftest
+```
+
+⚠️ На Windows вызывайте `python`, а не `python3`: последний часто оказывается заглушкой Windows, ведущей на другую сборку без зависимостей. Подробное правило — `shared/conventions.md` → «Единый паттерн feature detection + fallback», п. 0.
 
 ### 3. Глобальная память (рекомендуется задать сразу)
 
@@ -110,8 +132,8 @@ export VASSAL_GLOBAL_DIR="$HOME/OneDrive/vassal-global"
 vassal-litigator/
 ├── .claude-plugin/
 │   └── plugin.json          # Манифест плагина
-├── commands/                 # Slash-команды (23)
-├── skills/                   # Скиллы (23)
+├── commands/                 # Slash-команды (24)
+├── skills/                   # Скиллы (24)
 │   ├── init-case/
 │   ├── intake/
 │   ├── catalog/
@@ -142,9 +164,14 @@ vassal-litigator/
 │   ├── case-schema.yaml
 │   ├── index-schema.yaml
 │   └── mirror-template.md
+│   ├── ocr.md               # протокол извлечения текста (vision, таблицы §5а)
+│   ├── category-routing.md  # диспетчер «категория дела -> справочники и нормы»
 ├── scripts/                  # Утилиты
-│   ├── setup.sh
-│   ├── extract_text.py
+│   ├── setup.sh                 # Linux/Cowork
+│   ├── setup.ps1                # Windows (PowerShell)
+│   ├── extract_text.py          # приём: PDF/DOCX/таблицы -> текст, рендер, спот-сверка
+│   ├── analyze_table.py         # разбор таблиц: 4 профиля + --selftest (G.3)
+│   ├── format_doc.py            # печать .docx по фирменной типографике
 │   ├── tessdata/             # Вендоренный rus.traineddata для OCR
 │   ├── notion-init.md
 │   └── build-plugin.ps1
