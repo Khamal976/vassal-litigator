@@ -1,0 +1,130 @@
+# -*- coding: utf-8 -*-
+"""Машинная проверка дословности цитат в драфте справочника.
+
+Берёт каждый фрагмент в кавычках «...» и ищет его в корпусе первоисточников
+(тексты Пленумов, нормы ФЗ-127 и НК, добранные акты, карта практики).
+Расхождение хотя бы в одном символе — находка: выдуманная или «подправленная»
+цитата в производственном юридическом тексте опаснее отсутствующей.
+
+Запуск:  python verify_quotes.py <файл-драфта> [ещё файлы]
+"""
+import sys, os, re, glob, unicodedata, difflib
+
+REF = os.path.dirname(os.path.abspath(__file__))
+CORPUS_GLOBS = [
+    os.path.join(REF, 'texts', '*.txt'),
+    os.path.join(REF, 'texts', 'fz127', '*.txt'),
+    os.path.join(REF, 'sources0', '*.txt'),
+    os.path.join(REF, 'sources0', '*.md'),
+    os.path.join(REF, 'practice-map.md'),
+    os.path.join(REF, 'check-mine.md'),
+]
+MIN_LEN = 40          # короткие обороты и реквизиты не проверяем
+CONTEXT = 60          # сколько символов показать у ближайшего варианта
+
+
+def norm(s):
+    """Нормализация, снимающая типографику, но не меняющая слов."""
+    s = unicodedata.normalize('NFKC', s)
+    s = s.replace('ё', 'е').replace('Ё', 'Е')
+    s = re.sub(r'[«»""„“”]', '"', s)
+    s = re.sub(r'[‐-―−-]', '-', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip().lower()
+
+
+def load_corpus():
+    parts, names = [], []
+    for pattern in CORPUS_GLOBS:
+        for path in sorted(glob.glob(pattern)):
+            try:
+                parts.append(norm(open(path, encoding='utf-8').read()))
+                names.append(os.path.relpath(path, REF))
+            except OSError:
+                pass
+    return parts, names
+
+
+def strip_markup(q):
+    """Снимает разметку цитирования, не трогая слова.
+
+    В markdown цитата часто идёт блоком «> ...», абзацы внутри неё склеиваются
+    авторским «//», а усечение обозначается многоточием. Всё это — оформление,
+    а не текст источника, и сравнивать надо без него.
+    """
+    q = re.sub(r'(?m)^\s*>\s?', ' ', q)
+    q = q.replace('//', ' ')
+    q = re.sub(r'^\s*[.…]{2,}\s*|\s*[.…]{2,}\s*$', ' ', q)
+    return q.strip()
+
+
+def extract_quotes(text):
+    """Цитаты в «ёлочках», включая многострочные."""
+    out = []
+    for m in re.finditer(r'«([^«»]{%d,})»' % MIN_LEN, text, re.S):
+        q = strip_markup(m.group(1))
+        if len(q) < MIN_LEN:
+            continue
+        line = text.count('\n', 0, m.start()) + 1
+        out.append((line, q))
+    return out
+
+
+def closest(needle, parts, names):
+    """Ближайший фрагмент корпуса — чтобы было видно, чем цитата отличается."""
+    best = (0.0, '', '')
+    head = needle[:40]
+    for text, name in zip(parts, names):
+        idx = text.find(head[:20])
+        while idx != -1 and best[0] < 0.99:
+            cand = text[idx:idx + len(needle) + 20]
+            r = difflib.SequenceMatcher(None, needle, cand).ratio()
+            if r > best[0]:
+                best = (r, cand[:len(needle) + CONTEXT], name)
+            idx = text.find(head[:20], idx + 1)
+    return best
+
+
+def check(path, parts, names):
+    # сам проверяемый файл из корпуса исключаем: иначе цитата подтвердит сама себя
+    here = os.path.abspath(path)
+    keep = [(t, n) for t, n in zip(parts, names)
+            if os.path.abspath(os.path.join(REF, n)) != here]
+    parts = [t for t, _ in keep]
+    names = [n for _, n in keep]
+    text = open(path, encoding='utf-8').read()
+    quotes = extract_quotes(text)
+    ok = miss = 0
+    print('=' * 70)
+    print('ФАЙЛ: %s — цитат к проверке: %d' % (os.path.basename(path), len(quotes)))
+    print('=' * 70)
+    for line, raw in quotes:
+        q = norm(raw)
+        found = next((n for t, n in zip(parts, names) if q in t), None)
+        if found:
+            ok += 1
+            continue
+        miss += 1
+        ratio, cand, src = closest(q, parts, names)
+        print('\n[строка %d] ❌ ДОСЛОВНО НЕ НАЙДЕНА (лучшее совпадение %.2f, %s)'
+              % (line, ratio, src or '—'))
+        print('  В ДРАФТЕ:    %s' % raw.strip()[:220].replace('\n', ' '))
+        if cand:
+            print('  В ИСТОЧНИКЕ: %s' % cand[:220])
+    print('\nИТОГ по файлу: подтверждено %d, не найдено %d' % (ok, miss))
+    return miss
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    parts, names = load_corpus()
+    print('корпус: %d файлов' % len(parts))
+    total = sum(check(p, parts, names) for p in sys.argv[1:] if os.path.exists(p))
+    print('\n%s\nВСЕГО НЕПОДТВЕРЖДЁННЫХ ЦИТАТ: %d' % ('=' * 70, total))
+    return 1 if total else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
