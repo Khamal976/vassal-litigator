@@ -17,17 +17,26 @@ analyze_table.py — аналитическая нога табличного р
 использованные в расчёте ставки списком, сверку с cbr.ru делает агент по канону
 `shared/conventions.md` → «Расчёт денежных требований: дата начала и ставка (F.10)».
 
-Профили (первая версия — по решению Сюзерена 2026-07-30):
+Профили (все четыре — по решению Сюзерена 2026-07-30):
     debt-calc   — расчёт долга / неустойки / процентов (наш и оппонента)
     statement   — выписка по счёту: обороты, полнота, дубли, дробление, получатели
-    (registry · payments — следующими шагами)
+    payments    — платежи против периодов подозрительности гл. III.1 ФЗ-127
+    registry    — реестр требований кредиторов: очереди, доля голоса, дубли
 
 Запуск:
-    python3 analyze_table.py <файл.xlsx> --profile debt-calc [--sheet "Лист"]
-                             [--tolerance 1.0] [--out-dir DIR]
+    python analyze_table.py <файл.xlsx> --profile debt-calc [--sheet "Лист"]
+                            [--tolerance 1.0] [--out-dir DIR]
+    python analyze_table.py <файл.xlsx> --profile payments
+                            --case-opened 2026-06-15 | --case путь/к/case.yaml
+    python analyze_table.py <файл.xlsx> --profile registry --our "Наш клиент"
+    python analyze_table.py --selftest
 
-Выход: JSON. Ключи: profile · sheet · columns · formula · rows · findings ·
-totals · rates · periods. Ненайденное — `null`, не догадка.
+На Windows вызывать `python`, не `python3` (см. `shared/conventions.md` →
+«Единый паттерн feature detection + fallback», п. 0).
+
+Выход: JSON. Ненайденное — `null`, не догадка. Профиль `payments` без даты
+принятия заявления периоды НЕ считает: от неё зависит применимый состав,
+и ошибка на день меняет квалификацию.
 """
 
 import sys
@@ -183,6 +192,20 @@ def _close(a, b, tolerance):
     return abs(a - b) <= max(tolerance, abs(b) * REL_TOLERANCE)
 
 
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """«1 платёж / 2 платежа / 5 платежей» — текст читает юрист, падежи заметны."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {one}"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def _payments_word(n: int) -> str:
+    return _plural(n, "платёж", "платежа", "платежей")
 
 
 def _money(value) -> str:
@@ -433,6 +456,29 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
 
 # --- чтение листа -----------------------------------------------------------
 
+def _anchor_from_case(case_path: str):
+    """Дата принятия заявления из `case.yaml` → (дата, источник).
+
+    Берём именно `case.bankruptcy.case_opened_date`. В схеме у поля стоит
+    предупреждение: при нескольких заявлениях о банкротстве там должна лежать дата
+    принятия ПЕРВОГО (п. 7 ППВАС № 35). Проверить это машинно нельзя — поэтому
+    источник возвращается наружу, чтобы скилл показал его Сюзерену на сверку.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return None, None
+    try:
+        with open(case_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        return None, None
+    node = (data.get("case") or {}).get("bankruptcy") or {}
+    value = node.get("case_opened_date")
+    date = _as_date(value) if value else None
+    return date, (f"case.yaml → case.bankruptcy.case_opened_date = {value}" if date else None)
+
+
 def load_sheet(path: str, sheet: str = None):
     from openpyxl import load_workbook
     wb = load_workbook(path, data_only=True, read_only=True, keep_links=False)
@@ -625,7 +671,7 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
     for s in splits[:10]:
         same_day = s["from"] == s["to"]
         add("payment-splitting", "warn",
-            f"«{s['party']}» — платежей: {len(s['rows'])}, "
+            f"«{s['party']}» — {_payments_word(len(s['rows']))}, "
             + (f"все {s['from']}" if same_day else f"за {s['from']}–{s['to']}")
             + f", на {_money(s['total'])} (строки {', '.join(map(str, s['rows']))}). "
               f"Похоже на дробление — гипотеза, требует проверки: у дробления бывают "
@@ -726,7 +772,301 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
             "totals": totals, "findings": findings, "rows": []}
 
 
-PROFILES = {"debt-calc": profile_debt_calc, "statement": profile_statement}
+# --- профиль payments (платежи против периодов подозрительности) --------------
+#
+# Правовая рамка — гл. III.1 ФЗ-127, анкер сверен дословно 2026-07-30:
+#   ст. 61.3 п. 2 — 1 месяц до принятия заявления (или после его принятия)
+#   ст. 61.3 п. 3 — 6 месяцев до принятия заявления
+#   ст. 61.2 п. 1 — 1 год до принятия заявления (или после)
+#   ст. 61.2 п. 2 — 3 года до принятия заявления (или после)
+# Анкер — ДАТА ПРИНЯТИЯ СУДОМ ЗАЯВЛЕНИЯ о признании должника банкротом; при
+# нескольких заявлениях — дата принятия ПЕРВОГО (п. 7 ППВАС № 35 от 22.06.2012).
+# Периоды ВЛОЖЕНЫ: платёж в пределах месяца попадает и в 6 месяцев, и в год, и в
+# три года. Чем ближе к анкеру, тем легче состав: по ст. 61.3 п. 2 недобросовестность
+# контрагента не доказывается (п. 11 ППВАС № 63), по ст. 61.2 п. 2 нужен полный
+# состав из трёх элементов. Поэтому профиль называет САМЫЙ ЛЁГКИЙ применимый состав.
+
+BORDER_DAYS = 5          # ± дней от границы периода — «на границе», решает один день
+
+PAYMENT_MARKERS = {
+    "date":       ("дата", "дата платежа", "дата операции", "дата сделки"),
+    "amount":     ("сумма", "размер", "сумма платежа", "сумма сделки"),
+    "party":      ("контрагент", "получатель", "кредитор", "наименование", "сторона"),
+    "inn":        ("инн",),
+    "purpose":    ("назначение", "основание", "содержание", "предмет"),
+    "affiliated": ("аффилирован", "заинтересован", "связанн"),
+}
+
+
+def _shift_months(date: dt.date, months: int) -> dt.date:
+    """Сдвиг на месяцы назад с коррекцией дня (31.03 − 1 мес → 28/29.02)."""
+    year = date.year + (date.month - 1 - months) // 12
+    month = (date.month - 1 - months) % 12 + 1
+    day = date.day
+    while day > 0:
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            day -= 1
+    return date
+
+
+def _classify_payment(payment: dt.date, anchor: dt.date) -> dict:
+    """Период подозрительности и самый лёгкий применимый состав."""
+    bounds = {
+        "1m": _shift_months(anchor, 1),
+        "6m": _shift_months(anchor, 6),
+        "1y": _shift_months(anchor, 12),
+        "3y": _shift_months(anchor, 36),
+    }
+    if payment >= anchor:
+        band, article = "после принятия заявления", "ст. 61.3 п. 2 / ст. 61.2"
+    elif payment >= bounds["1m"]:
+        band, article = "1 месяц до принятия заявления", "ст. 61.3 п. 2"
+    elif payment >= bounds["6m"]:
+        band, article = "6 месяцев до принятия заявления", "ст. 61.3 п. 3"
+    elif payment >= bounds["1y"]:
+        band, article = "1 год до принятия заявления", "ст. 61.2 п. 1"
+    elif payment >= bounds["3y"]:
+        band, article = "3 года до принятия заявления", "ст. 61.2 п. 2"
+    else:
+        band, article = "вне периодов гл. III.1", "только ст. 10 и 168 ГК (п. 4 ППВАС № 63)"
+
+    near = []
+    for key, bound in bounds.items():
+        delta = abs((payment - bound).days)
+        if delta <= BORDER_DAYS:
+            near.append({"bound": key, "date": bound.isoformat(), "days": delta})
+    return {"band": band, "article": article, "bounds": {k: v.isoformat() for k, v in bounds.items()},
+            "near_border": near}
+
+
+def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=None) -> dict:
+    findings = []
+    cols = _detect_by_markers(headers, PAYMENT_MARKERS)
+
+    def add(code, severity, message, cells=None, numbers=None):
+        findings.append({"code": code, "severity": severity, "message": message,
+                         "cells": cells or [], "numbers": numbers or {}})
+
+    if "date" not in cols:
+        for col in range(len(headers)):
+            values = [r[col] for r in rows if col < len(r)]
+            if sum(1 for v in values if _is_date_like(v)) >= max(2, len(values) // 3):
+                cols["date"] = col
+                break
+
+    if anchor is None:
+        add("anchor-missing", "error",
+            "Не задана дата принятия судом заявления о признании должника банкротом — "
+            "периоды подозрительности НЕ рассчитаны. Это не догадка инструмента: от этой "
+            "даты зависит применимый состав, и ошибка на день меняет квалификацию. "
+            "Передайте `--case-opened ГГГГ-ММ-ДД` либо `--case путь/к/case.yaml` "
+            "(поле case.bankruptcy.case_opened_date). При нескольких заявлениях о "
+            "банкротстве берите дату принятия ПЕРВОГО (п. 7 ППВАС № 35 от 22.06.2012)")
+
+    payments, by_band = [], {}
+    for i, row in enumerate(rows):
+        row1 = header_row1 + 1 + i
+        rec = {key: (row[idx] if idx < len(row) else None) for key, idx in cols.items()}
+        date = _as_date(rec.get("date"))
+        amount = _num(rec.get("amount"))
+        if date is None or amount is None:
+            continue
+        item = {"row": row1, "date": date.isoformat(), "amount": amount,
+                "party": _extract_party(rec), "inn": _cell_str(rec.get("inn")),
+                "purpose": _cell_str(rec.get("purpose"))}
+        if anchor:
+            verdict = _classify_payment(date, anchor)
+            item.update({"band": verdict["band"], "article": verdict["article"],
+                         "near_border": verdict["near_border"]})
+            bucket = by_band.setdefault(verdict["band"],
+                                        {"count": 0, "total": 0.0, "article": verdict["article"],
+                                         "rows": []})
+            bucket["count"] += 1
+            bucket["total"] = round(bucket["total"] + amount, 2)
+            bucket["rows"].append(row1)
+            for nb in verdict["near_border"]:
+                add("near-period-border", "warn",
+                    f"строка {row1}: платёж {date:%d.%m.%Y} на {_money(amount)} — "
+                    f"в {nb['days']} дн. от границы периода «{nb['bound']}» "
+                    f"({dt.date.fromisoformat(nb['date']):%d.%m.%Y}). От одного дня "
+                    f"зависит применимый состав: проверьте дату по первичному документу, "
+                    f"а не по реестру",
+                    [_addr(sheet_name, row1, cols.get("date", 0))],
+                    {"days_to_border": nb["days"], "bound": nb["bound"]})
+        payments.append(item)
+
+    if anchor and payments:
+        outside = by_band.get("вне периодов гл. III.1")
+        if outside:
+            add("outside-periods", "info",
+                f"{_payments_word(outside['count'])} на {_money(outside['total'])} — вне периодов "
+                f"гл. III.1 (строки {', '.join(map(str, outside['rows'][:10]))}). По специальным "
+                f"основаниям не оспариваются; остаётся ничтожность при злоупотреблении правом "
+                f"(ст. 10 и 168 ГК, п. 4 ППВАС № 63) — другое основание и другая давность",
+                [], {"count": outside["count"], "total": outside["total"]})
+        easiest = by_band.get("1 месяц до принятия заявления") or \
+            by_band.get("после принятия заявления")
+        if easiest:
+            add("easiest-composition", "info",
+                f"{_payments_word(easiest['count'])} на {_money(easiest['total'])} попадают в "
+                f"самый лёгкий состав — {easiest['article']}: предпочтение доказывается "
+                f"фактом, недобросовестность контрагента доказывать не требуется "
+                f"(п. 11 ППВАС № 63). Начинать разбор выгоднее с них",
+                [], {"count": easiest["count"], "total": easiest["total"]})
+
+    # аффилированность: один ИНН у разных наименований и наоборот
+    if "inn" in cols:
+        by_inn, by_name = {}, {}
+        for p in payments:
+            if p["inn"]:
+                by_inn.setdefault(p["inn"], set()).add(p["party"])
+            if p["party"]:
+                by_name.setdefault(p["party"], set()).add(p["inn"])
+        for inn, names in by_inn.items():
+            names = {n for n in names if n}
+            if len(names) > 1:
+                add("inn-name-mismatch", "warn",
+                    f"ИНН {inn} встречается с разными наименованиями: "
+                    f"{', '.join(sorted(names))}. Либо переименование контрагента, либо "
+                    f"ошибка в реестре — сверьте по ЕГРЮЛ, прежде чем строить довод",
+                    [], {"inn": inn})
+
+    return {"columns": {k: _col_letter(v) for k, v in cols.items()},
+            "anchor": anchor.isoformat() if anchor else None,
+            "bounds": ({k: v for k, v in _classify_payment(anchor, anchor)["bounds"].items()}
+                       if anchor else None),
+            "payments": payments, "by_band": by_band, "findings": findings, "rows": []}
+
+
+# --- профиль registry (реестр требований кредиторов) --------------------------
+
+REGISTRY_MARKERS = {
+    "party":   ("кредитор", "наименование", "заявитель", "фио"),
+    "inn":     ("инн",),
+    "amount":  ("сумма", "размер требования", "включено", "основной долг", "требование"),
+    "queue":   ("очередь", "очередность", "реестр"),
+    "penalty": ("неустойка", "пени", "штраф", "финансовые санкции"),
+    "date":    ("дата", "определение", "дата включения"),
+    "voting":  ("голос", "голосующие", "% голосов"),
+}
+
+QUEUE_PATTERN = re.compile(r"(перв|втор|трет|четв|зареестр|текущ)", re.IGNORECASE)
+
+
+def profile_registry(sheet_name, headers, rows, header_row1, tolerance, our=None) -> dict:
+    findings = []
+    cols = _detect_by_markers(headers, REGISTRY_MARKERS)
+
+    def add(code, severity, message, cells=None, numbers=None):
+        findings.append({"code": code, "severity": severity, "message": message,
+                         "cells": cells or [], "numbers": numbers or {}})
+
+    if "amount" not in cols:
+        add("columns-missing", "warn",
+            "Колонка суммы требования не распознана — итоги по очередям и доля голосов "
+            "не посчитаны. Заголовки: " + " | ".join(h for h in headers if h))
+
+    creditors, queues = [], {}
+    for i, row in enumerate(rows):
+        row1 = header_row1 + 1 + i
+        rec = {key: (row[idx] if idx < len(row) else None) for key, idx in cols.items()}
+        amount = _num(rec.get("amount"))
+        party = _cell_str(rec.get("party"))
+        if amount is None and not party:
+            continue
+        joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
+        if any(m in joined for m in ("итого", "всего")):
+            continue
+        queue_raw = _cell_str(rec.get("queue"))
+        match = QUEUE_PATTERN.search(queue_raw) or QUEUE_PATTERN.search(joined)
+        queue = match.group(1).lower() if match else "не указана"
+        item = {"row": row1, "party": party, "inn": _cell_str(rec.get("inn")),
+                "amount": amount, "penalty": _num(rec.get("penalty")), "queue": queue}
+        creditors.append(item)
+        bucket = queues.setdefault(queue, {"count": 0, "total": 0.0, "penalty": 0.0,
+                                           "rows": []})
+        bucket["count"] += 1
+        bucket["total"] = round(bucket["total"] + (amount or 0), 2)
+        bucket["penalty"] = round(bucket["penalty"] + (item["penalty"] or 0), 2)
+        bucket["rows"].append(row1)
+
+    total_all = round(sum(c["amount"] or 0 for c in creditors), 2)
+
+    # наше требование и вес голоса
+    ours = None
+    if our:
+        needle = our.strip().lower()
+        matched = [c for c in creditors
+                   if needle in (c["party"] or "").lower() or needle == (c["inn"] or "")]
+        if not matched:
+            add("our-claim-missing", "error",
+                f"Требование «{our}» в реестре НЕ НАЙДЕНО. Проверьте: включено ли оно "
+                f"вообще, не искажено ли наименование, не пропущен ли срок предъявления "
+                f"(за пределами срока требование становится зареестровым)",
+                [], {"searched": our})
+        else:
+            our_total = round(sum(c["amount"] or 0 for c in matched), 2)
+            ours = {"rows": [c["row"] for c in matched], "total": our_total,
+                    "queue": matched[0]["queue"]}
+            # Вес голоса считается по третьей очереди БЕЗ неустоек: финансовые санкции
+            # голосов не дают (п. 3 ст. 12 ФЗ-127) — иначе доля завышается.
+            third = queues.get("трет")
+            if third and third["total"]:
+                base = round(third["total"] - third["penalty"], 2) or third["total"]
+                our_base = round(our_total - sum(c["penalty"] or 0 for c in matched), 2)
+                share = round(our_base / base * 100, 2) if base else None
+                ours.update({"voting_base": base, "our_voting_amount": our_base,
+                             "share_percent": share})
+                if share is not None:
+                    add("voting-share", "info",
+                        f"Доля нашего требования в третьей очереди: {share} % "
+                        f"({_money(our_base)} из {_money(base)}). Считано БЕЗ неустоек и "
+                        f"санкций — они голосов не дают. Порог блокировки решений — "
+                        f"более 25 %, единоличного контроля собрания — более 50 %",
+                        [], {"share_percent": share})
+
+    # дубли кредиторов и расхождения ИНН/наименования
+    by_inn = {}
+    for c in creditors:
+        if c["inn"]:
+            by_inn.setdefault(c["inn"], []).append(c)
+    for inn, items in by_inn.items():
+        if len(items) > 1:
+            add("creditor-duplicate", "warn",
+                f"ИНН {inn} встречается в {len(items)} строках "
+                f"({', '.join(str(i['row']) for i in items)}) на общую сумму "
+                f"{_money(sum(i['amount'] or 0 for i in items))}. Это либо несколько "
+                f"требований одного кредитора (норма), либо задвоение — влияет и на "
+                f"итог реестра, и на расчёт доли голосов",
+                [], {"inn": inn, "rows": [i["row"] for i in items]})
+
+    # итоговая строка против суммы
+    stated_total, stated_row = None, None
+    for i, row in enumerate(rows):
+        joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
+        if any(m in joined for m in ("итого", "всего")) and "amount" in cols:
+            val = _num(row[cols["amount"]] if cols["amount"] < len(row) else None)
+            if val is not None:
+                stated_total, stated_row = val, header_row1 + 1 + i
+                if not _close(val, total_all, tolerance):
+                    add("total-mismatch", "error",
+                        f"итог реестра в таблице {_money(val)}, сумма требований "
+                        f"{_money(total_all)}, расхождение {_money_signed(val - total_all)}",
+                        [_addr(sheet_name, stated_row, cols["amount"])],
+                        {"stated": val, "computed": total_all})
+                break
+
+    return {"columns": {k: _col_letter(v) for k, v in cols.items()},
+            "creditors_count": len(creditors), "total": total_all,
+            "queues": queues, "ours": ours,
+            "totals": {"stated_total": stated_total, "stated_total_row": stated_row},
+            "findings": findings, "rows": []}
+
+
+PROFILES = {"debt-calc": profile_debt_calc, "statement": profile_statement,
+            "payments": profile_payments, "registry": profile_registry}
 
 
 def selftest() -> int:
@@ -805,6 +1145,30 @@ def selftest() -> int:
             print(f"SELFTEST [{tag}] ✓ коды {sorted(codes) or '—'}, ошибок {errors}"
                   + (f", формула «{res['formula']['label']}»" if res.get("formula") else ""))
 
+    # 4) платежи против периодов подозрительности (анкер 15.06.2026)
+    wb4 = Workbook(); w4 = wb4.active; w4.title = "Платежи"
+    w4.append(["Дата", "Контрагент", "ИНН", "Назначение", "Сумма"])
+    for date, party, inn, amount in (
+            (dt.date(2026, 6, 1), 'ООО "Ромашка"', "7707083893", 1200000.0),   # 1 месяц
+            (dt.date(2026, 5, 16), 'ООО "Лютик"', "7712345678", 500000.0),      # граница 1 дн.
+            (dt.date(2026, 1, 10), 'ООО "Пион"', "7799999999", 2000000.0),      # 6 месяцев
+            (dt.date(2024, 3, 3), 'ООО "Старый"', "7788888888", 5000000.0),     # 3 года
+            (dt.date(2022, 1, 1), 'ООО "Древний"', "7766666666", 900000.0)):    # вне периодов
+        w4.append([date, party, inn, "оплата", amount])
+    pay_path = os.path.join(tmp, "payments.xlsx"); wb4.save(pay_path)
+
+    # 5) реестр требований: наше требование, дубль ИНН, неустойки без голосов
+    wb5 = Workbook(); w5 = wb5.active; w5.title = "Реестр"
+    w5.append(["Кредитор", "ИНН", "Очередь", "Основной долг", "Неустойка"])
+    for party, inn, queue, debt, penalty in (
+            ('ООО "Наш клиент"', "7701111111", "третья", 50000000.0, 10000000.0),
+            ('ПАО "Банк"', "7702222222", "третья", 120000000.0, 0.0),
+            ('ФНС России', "7703333333", "третья", 30000000.0, 5000000.0),
+            ('Работники', "", "вторая", 3000000.0, 0.0),
+            ('ООО "Банк"', "7702222222", "третья", 20000000.0, 0.0)):
+        w5.append([party, inn, queue, debt, penalty])
+    reg_path = os.path.join(tmp, "registry.xlsx"); wb5.save(reg_path)
+
     # профиль statement
     name, headers, rows, hdr = load_sheet(st_path)
     res = profile_statement(name, headers, rows, hdr, DEFAULT_TOLERANCE)
@@ -821,6 +1185,48 @@ def selftest() -> int:
         gap = res["balance_check"]["breaks"][0]["gap"]
         print(f"SELFTEST [statement] ✓ коды {sorted(codes)}, скрытых операций на "
               f"{_money(gap)}, дробление: 1 группа из 4 платежей")
+
+    # профиль payments — сначала БЕЗ анкера: обязан отказаться считать
+    name, headers, rows, hdr = load_sheet(pay_path)
+    res = profile_payments(name, headers, rows, hdr, DEFAULT_TOLERANCE, anchor=None)
+    if {f["code"] for f in res["findings"] if f["severity"] == "error"} != {"anchor-missing"}:
+        ok_all = False
+        print("SELFTEST [payments/без анкера] ✗ без даты принятия заявления профиль обязан "
+              "вернуть ровно anchor-missing и не считать периоды")
+    else:
+        print("SELFTEST [payments/без анкера] ✓ отказался считать без даты принятия заявления")
+
+    # с анкером: пять платежей должны разойтись по пяти разным периодам
+    res = profile_payments(name, headers, rows, hdr, DEFAULT_TOLERANCE,
+                           anchor=dt.date(2026, 6, 15))
+    bands = res["by_band"]
+    expected_bands = {"1 месяц до принятия заявления", "6 месяцев до принятия заявления",
+                      "3 года до принятия заявления", "вне периодов гл. III.1"}
+    border = [f for f in res["findings"] if f["code"] == "near-period-border"]
+    if not expected_bands.issubset(set(bands)) or len(border) != 1:
+        ok_all = False
+        print(f"SELFTEST [payments] ✗ ожидались периоды {sorted(expected_bands)} и один флаг "
+              f"границы; получено {sorted(bands)}, флагов границы {len(border)}")
+    else:
+        print(f"SELFTEST [payments] ✓ периодов {len(bands)}, границы: {len(border)}, "
+              f"вне гл. III.1: {_money(bands['вне периодов гл. III.1']['total'])}")
+
+    # профиль registry — доля голоса считается без неустоек
+    name, headers, rows, hdr = load_sheet(reg_path)
+    res = profile_registry(name, headers, rows, hdr, DEFAULT_TOLERANCE, our="Наш клиент")
+    ours = res.get("ours") or {}
+    dup = [f for f in res["findings"] if f["code"] == "creditor-duplicate"]
+    # Арифметика ожидания (считана вручную по фикстуре, чтобы тест проверял код,
+    # а не повторял его): третья очередь = 50 + 120 + 30 + 20 = 220 млн долга,
+    # неустоек 10 + 5 = 15 млн. База голосов = 220 − 15 = 205 млн. Наше без
+    # неустойки = 50 − 10 = 40 млн. Доля = 40 / 205 = 19,51 %.
+    if round(ours.get("share_percent") or 0, 2) != 19.51 or len(dup) != 1:
+        ok_all = False
+        print(f"SELFTEST [registry] ✗ ожидалась доля 19.51 % (без неустоек) и один дубль ИНН; "
+              f"получено {ours.get('share_percent')} %, дублей {len(dup)}")
+    else:
+        print(f"SELFTEST [registry] ✓ доля голоса {ours['share_percent']} % без неустоек, "
+              f"дубль ИНН найден")
 
     print("SELFTEST:", "ВСЁ ЗЕЛЁНОЕ" if ok_all else "ЕСТЬ ОТКАЗЫ")
     return 0 if ok_all else 1
@@ -874,7 +1280,24 @@ def main():
                          ensure_ascii=False))
         return 0
 
-    result = PROFILES[profile](name, headers, rows, header_row1, tolerance)
+    extra = {}
+    if profile == "payments":
+        anchor = _as_date(opt("--case-opened"))
+        case_path = opt("--case")
+        anchor_source = "--case-opened" if anchor else None
+        if anchor is None and case_path:
+            anchor, anchor_source = _anchor_from_case(case_path)
+        extra["anchor"] = anchor
+        result_anchor_source = anchor_source
+    elif profile == "registry":
+        extra["our"] = opt("--our")
+        result_anchor_source = None
+    else:
+        result_anchor_source = None
+
+    result = PROFILES[profile](name, headers, rows, header_row1, tolerance, **extra)
+    if result_anchor_source:
+        result["anchor_source"] = result_anchor_source
     result.update({"profile": profile, "sheet": name, "file": Path(path).name,
                    "header_row": header_row1,
                    "errors": sum(1 for f in result["findings"] if f["severity"] == "error")})
