@@ -65,19 +65,28 @@ MIN_ROWS_FOR_FORMULA = 2       # меньше — модель не выводи
 
 # --- распознавание колонок --------------------------------------------------
 
+# Порядок КЛЮЧЕЙ значим: кто раньше — тот забирает колонку (см. `break` в
+# detect_columns). Поэтому итоговая сумма ищется ДО ставки и границ периода:
+# заголовок «Итого по строке» содержит «по», а «Сумма процентов» — «процент»,
+# и при обратном порядке они уезжали в date_to / rate (поймано проверкой 2026-07-30).
+# Маркеры-подстроки из одной-двух букв («по », «от») убраны: «Оборот» матчился
+# как дата начала. Вместо них — точные формы, сравнение по равенству.
 COLUMN_MARKERS = {
-    "base":      ("сумма долга", "задолженность", "основной долг", "база", "сумма задолж",
-                  "недоимка", "сумма основного", "остаток долга", "долг"),
-    "rate":      ("ставка", "%", "процент", "ключевая", "рефинанс"),
+    "amount":    ("пени", "неустойка", "сумма пени", "начислено", "к взысканию",
+                  "итого по строке", "сумма процентов", "размер пени", "проценты"),
+    "base":      ("сумма долга", "задолженность", "основной долг", "сумма задолж",
+                  "недоимка", "сумма основного", "остаток долга", "база", "долг"),
     "days":      ("дней", "дни", "кол-во дней", "количество дней", "число дней",
-                  "период просрочки", "просрочка, дн"),
-    "date_from": ("с ", "дата с", "начало", "период с", "с даты", "дата начала", "от"),
-    "date_to":   ("по ", "дата по", "окончание", "период по", "по дату", "дата окончания",
-                  "конец"),
-    "amount":    ("пени", "неустойка", "проценты", "сумма пени", "начислено",
-                  "к взысканию", "итого по строке", "сумма процентов", "размер"),
+                  "период просрочки", "просрочка"),
+    "rate":      ("ставка", "ключевая", "рефинанс", "%", "процент годовых"),
+    "date_from": ("дата с", "период с", "с даты", "дата начала", "начало периода",
+                  "начало", "дата от"),
+    "date_to":   ("дата по", "период по", "по дату", "дата окончания", "конец периода",
+                  "окончание", "конец"),
     "paid":      ("оплачено", "погашено", "платеж", "платёж", "оплата", "внесено"),
 }
+# Заголовки, совпадающие с этими значениями ТОЧНО (а не как подстрока).
+COLUMN_EXACT = {"date_from": ("с", "от", "с:"), "date_to": ("по", "по:")}
 
 
 def _norm_header(value: str) -> str:
@@ -90,10 +99,11 @@ def detect_columns(headers: list, rows: list) -> dict:
     norm = [_norm_header(h) for h in headers]
 
     for key, markers in COLUMN_MARKERS.items():
+        exact = COLUMN_EXACT.get(key, ())
         for idx, head in enumerate(norm):
             if not head or idx in found.values():
                 continue
-            if any(m in head for m in markers):
+            if head in exact or any(m in head for m in markers):
                 found[key] = idx
                 break
 
@@ -171,24 +181,49 @@ def _num(value):
     return result
 
 
+MONTHS_RU = {"январ": 1, "феврал": 2, "март": 3, "апрел": 4, "мая": 5, "май": 5,
+             "июн": 6, "июл": 7, "август": 8, "сентябр": 9, "октябр": 10,
+             "ноябр": 11, "декабр": 12}
+
+
 def _as_date(value):
+    """Дата из ячейки. Форматов больше, чем «ДД.ММ.ГГГГ» и ISO.
+
+    Прежняя версия требовала ровно две цифры на день и четыре на год, поэтому
+    «1.02.2026», «01.02.26» и «2026/02/01» давали None — а строка с непрочитанной
+    датой отбрасывалась целиком, и платёж исчезал из периодов подозрительности
+    без единого следа (поймано состязательной проверкой 2026-07-30).
+    """
     if isinstance(value, dt.datetime):
         return value.date()
     if isinstance(value, dt.date):
         return value
-    if isinstance(value, str):
-        m = re.search(r"(\d{2})[.\-/](\d{2})[.\-/](\d{4})", value)
-        if m:
-            try:
-                return dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-            except ValueError:
-                return None
-        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", value)
-        if m:
-            try:
-                return dt.date(*map(int, m.groups()))
-            except ValueError:
-                return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower().replace(" ", " ")
+    text = re.sub(r"г\.?\s*$", "", text).strip()
+    if not text:
+        return None
+
+    def _mk(year, month, day):
+        if year < 100:
+            year += 2000 if year < 50 else 1900
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            return None
+
+    m = re.search(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", text)
+    if m:
+        return _mk(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = re.search(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})", text)
+    if m:
+        return _mk(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    m = re.search(r"(\d{1,2})\s+([а-яё]{3,})\s+(\d{4})", text)
+    if m:
+        for stem, num in MONTHS_RU.items():
+            if m.group(2).startswith(stem):
+                return _mk(int(m.group(3)), num, int(m.group(1)))
     return None
 
 
@@ -205,24 +240,32 @@ def _days_in_year(d: dt.date) -> int:
 def _formula_models(anchor_date):
     days_in_year = _days_in_year(anchor_date or dt.date(2026, 1, 1))
     return [
+        # «по факту года строки» — главная модель: канон F.10 п. 4 требует фактическое
+        # число дней СООТВЕТСТВУЮЩЕГО года. Расчёт, идущий через новый год (часть строк
+        # 2024 → 366, часть 2025 → 365), при едином делителе давал error на верных
+        # строках — до 40 % таблицы объявлялось ошибочным (поймано проверкой).
+        {"id": "annual/by-row", "days_in_year": None,
+         "label": "ставка % годовых / фактическое число дней года строки (365 или 366)",
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d / (
+             _days_in_year(dt.date(row_year, 1, 1)) if row_year else days_in_year)},
         {"id": "annual/actual", "days_in_year": days_in_year,
          "label": f"ставка % годовых / {days_in_year} дн.",
-         "fn": lambda b, r, d: b * (r / 100.0) * d / days_in_year},
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d / days_in_year},
         {"id": "annual/365", "days_in_year": 365,
          "label": "ставка % годовых / 365 дн.",
-         "fn": lambda b, r, d: b * (r / 100.0) * d / 365.0},
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d / 365.0},
         {"id": "annual/366", "days_in_year": 366,
          "label": "ставка % годовых / 366 дн.",
-         "fn": lambda b, r, d: b * (r / 100.0) * d / 366.0},
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d / 366.0},
         {"id": "annual/300", "days_in_year": 300,
          "label": "1/300 ставки за день (ЖКХ, налоги)",
-         "fn": lambda b, r, d: b * (r / 100.0) * d / 300.0},
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d / 300.0},
         {"id": "daily-percent", "days_in_year": None,
          "label": "ставка % за день (договорная, напр. 0,1 %)",
-         "fn": lambda b, r, d: b * (r / 100.0) * d},
+         "fn": lambda b, r, d, row_year=None: b * (r / 100.0) * d},
         {"id": "daily-fraction", "days_in_year": None,
          "label": "ставка долей за день (напр. 0,001)",
-         "fn": lambda b, r, d: b * r * d},
+         "fn": lambda b, r, d, row_year=None: b * r * d},
     ]
 
 
@@ -338,7 +381,9 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
 
     missing = [k for k in ("base", "rate", "days", "amount") if k not in cols]
     if missing:
-        add("columns-missing", "warn",
+        # severity error, а не warn: скилл маршрутизирует в досье только error, и
+        # «ничего не проверено» иначе читается юристом как «расхождений нет».
+        add("columns-missing", "error",
             "Не распознаны колонки: " + ", ".join(missing)
             + ". Проверены заголовки: " + " | ".join(h for h in headers if h)
             + ". Арифметика строк не проверялась — укажите колонки вручную или "
@@ -365,6 +410,21 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
         if _is_total_row(row):
             skipped_total_rows += 1
 
+    # Процентный формат Excel: «16 %» в файле лежит как 0.16, и values_only=True
+    # формат теряет. Без этой поправки ни одна модель не сходится, и профиль
+    # объявляет «формула нестандартная» вместо проверки арифметики.
+    rates_seen = [r["rate_num"] for r in data if r.get("rate_num") is not None]
+    fraction_rates = bool(rates_seen) and all(0 < abs(v) < 1 for v in rates_seen)
+    if fraction_rates:
+        for r in data:
+            if r.get("rate_num") is not None:
+                r["rate_num"] *= 100.0
+        add("rate-percent-format", "info",
+            "Ставки в файле хранятся долей (процентный формат Excel: 16 % = 0,16) — "
+            "для расчёта приведены к процентам. Если это ставка «доля за день», "
+            f"проверьте расчёт вручную: значения были {', '.join(f'{v:g}' for v in sorted(set(rates_seen))[:5])}",
+            [], {"raw_rates": sorted(set(rates_seen))[:10]})
+
     # --- выбор модели формулы
     anchor = next((r.get("date_from_date") for r in data if r.get("date_from_date")), None)
     formula = None
@@ -373,7 +433,9 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
         for model in _formula_models(anchor):
             ok = 0
             for r in data:
-                exp = model["fn"](r["base_num"], r["rate_num"] or 0, r["days_num"] or 0)
+                year = r["date_from_date"].year if r.get("date_from_date") else None
+                exp = model["fn"](r["base_num"], r["rate_num"] or 0, r["days_num"] or 0,
+                                  year)
                 if _close(exp, r["amount_num"], tolerance):
                     ok += 1
             scores.append((ok, model))
@@ -442,7 +504,8 @@ def profile_debt_calc(sheet_name, headers, rows, header_row1, tolerance) -> dict
         # арифметика строки по выбранной модели
         if formula and r.get("rate_num") is not None and r.get("days_num") is not None:
             model = next(m for m in _formula_models(anchor) if m["id"] == formula["id"])
-            expected = model["fn"](r["base_num"], r["rate_num"], r["days_num"])
+            year = r["date_from_date"].year if r.get("date_from_date") else None
+            expected = model["fn"](r["base_num"], r["rate_num"], r["days_num"], year)
             if not _close(expected, r["amount_num"], tolerance):
                 delta = r["amount_num"] - expected
                 row_findings.append({
@@ -874,6 +937,11 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
         key = (o["date"], o["debit"], o["credit"], o["party"])
         if o["date"] is None or (o["debit"] is None and o["credit"] is None):
             continue
+        # Без контрагента ключ вырождается в «дата + сумма»: ведомость на 30 выплат
+        # по 50 000 ₽ одной датой дала бы 29 флагов «дубль». Та же защита, что у
+        # дробления (поймано состязательной проверкой 2026-07-30).
+        if not o["party"]:
+            continue
         if key in seen:
             pair = [seen[key], o["row"]]
             if all(r in split_rows for r in pair):
@@ -927,30 +995,37 @@ def profile_statement(sheet_name, headers, rows, header_row1, tolerance) -> dict
                 {"gap_days": g["days"]})
 
     # --- итоговая строка против суммы операций
-    totals = {"stated_total": None, "stated_total_row": None, "delta": None,
-              "compared_against": None}
-    for i, row in enumerate(rows):
-        joined = " ".join(_cell_str(c).lower() for c in row if not _cell_empty(c))
-        if any(m in joined for m in ("итого", "всего", "оборот за период")):
-            for key, ref in (("debit", turnover["debit_total"]),
-                             ("credit", turnover["credit_total"])):
-                if key in cols:
-                    val = _num(row[cols[key]] if cols[key] < len(row) else None)
-                    if val is None:
-                        continue
-                    totals.update({"stated_total": val,
-                                   "stated_total_row": header_row1 + 1 + i,
-                                   "compared_against": key,
-                                   "delta": round(val - ref, 2)})
-                    if not _close(val, ref, tolerance):
-                        add("total-mismatch", "error",
-                            f"итог по колонке «{headers[cols[key]]}» в таблице "
-                            f"{_money(val)}, сумма операций {_money(ref)}, расхождение "
-                            f"{_money_signed(val - ref)}",
-                            [_addr(sheet_name, header_row1 + 1 + i, cols[key])],
-                            {"stated": val, "computed": ref})
-                    break
-            break
+    # Сверяются ОБА оборота: раньше внутренний цикл обрывался на первом найденном,
+    # и «Итого: приход 5 000 000, списание 5 000 000» с завышенным приходом проходило
+    # незамеченным. Итоговой считается последняя строка-итог (промежуточные выше).
+    totals = {"checked": [], "stated": {}, "deltas": {}, "stated_total_row": None}
+    total_rows_all = [i for i, row in enumerate(rows) if _is_total_row(row)]
+    if total_rows_all:
+        i = total_rows_all[-1]
+        row = rows[i]
+        row1 = header_row1 + 1 + i
+        totals["stated_total_row"] = row1
+        if len(total_rows_all) > 1:
+            add("intermediate-totals", "info",
+                f"строк с пометкой «итого/всего» найдено {len(total_rows_all)}; за общий "
+                f"итог взята последняя (строка {row1})", [],
+                {"rows": [header_row1 + 1 + k for k in total_rows_all]})
+        for key, ref in (("debit", turnover["debit_total"]),
+                         ("credit", turnover["credit_total"])):
+            if key not in cols:
+                continue
+            val = _num(row[cols[key]] if cols[key] < len(row) else None)
+            if val is None:
+                continue
+            totals["checked"].append(key)
+            totals["stated"][key] = val
+            totals["deltas"][key] = round(val - ref, 2)
+            if not _close(val, ref, tolerance):
+                add("total-mismatch", "error",
+                    f"итог по колонке «{headers[cols[key]]}» в таблице {_money(val)}, "
+                    f"сумма операций {_money(ref)}, расхождение {_money_signed(val - ref)}",
+                    [_addr(sheet_name, row1, cols[key])],
+                    {"stated": val, "computed": ref, "column": key})
 
     return {"columns": {k: _col_letter(v) for k, v in cols.items()},
             "turnover": turnover, "balance_check": balance_check,
@@ -1106,15 +1181,20 @@ def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=N
                 f"основаниям не оспариваются; остаётся ничтожность при злоупотреблении правом "
                 f"(ст. 10 и 168 ГК, п. 4 ППВАС № 63) — другое основание и другая давность",
                 [], {"count": outside["count"], "total": outside["total"]})
-        easiest = by_band.get("1 месяц до принятия заявления") or \
-            by_band.get("после принятия заявления")
-        if easiest:
+        # Ст. 61.3 п. 2 покрывает ОБА периода — месяц до принятия заявления и после
+        # него. Прежний `or` брал только первый непустой band и занижал и число
+        # платежей, и сумму (поймано состязательной проверкой).
+        art613_2 = [b for b in (by_band.get("1 месяц до принятия заявления"),
+                                by_band.get("после принятия заявления")) if b]
+        if art613_2:
+            count = sum(b["count"] for b in art613_2)
+            total = round(sum(b["total"] for b in art613_2), 2)
             add("easiest-composition", "info",
-                f"{_payments_word(easiest['count'])} на {_money(easiest['total'])} попадают в "
-                f"самый лёгкий состав — {easiest['article']}: предпочтение доказывается "
-                f"фактом, недобросовестность контрагента доказывать не требуется "
-                f"(п. 11 ППВАС № 63). Начинать разбор выгоднее с них",
-                [], {"count": easiest["count"], "total": easiest["total"]})
+                f"{_payments_word(count)} на {_money(total)} попадают в самый лёгкий "
+                f"состав — ст. 61.3 п. 2 (месяц до принятия заявления и после него): "
+                f"предпочтение доказывается фактом, недобросовестность контрагента "
+                f"доказывать не требуется (п. 11 ППВАС № 63). Начинать разбор выгоднее "
+                f"с них", [], {"count": count, "total": total})
 
     # аффилированность: один ИНН у разных наименований и наоборот
     if "inn" in cols:
@@ -1140,8 +1220,28 @@ def profile_payments(sheet_name, headers, rows, header_row1, tolerance, anchor=N
             f"Пропущенные платежи в периоды НЕ попали — проверьте формат этих строк",
             [], dict(stats))
 
+    # Периоды гл. III.1 ВЛОЖЕНЫ: платёж внутри месяца попадает и в 6 месяцев, и в год,
+    # и в три года. `by_band` относит платёж к одному — самому внутреннему — периоду,
+    # поэтому кумулятивные суммы отдаются отдельно: иначе читатель поля «6 месяцев»
+    # занизит объём оспариваемого (на боевых числах — в десятки раз).
+    cumulative = {}
+    if anchor and by_band:
+        chain = ["после принятия заявления", "1 месяц до принятия заявления",
+                 "6 месяцев до принятия заявления", "1 год до принятия заявления",
+                 "3 года до принятия заявления"]
+        labels = {1: "1 месяц и после (ст. 61.3 п. 2)",
+                  2: "6 месяцев и ближе (ст. 61.3 п. 3 + п. 2)",
+                  3: "1 год и ближе (ст. 61.2 п. 1 и вложенные)",
+                  4: "3 года и ближе (вся гл. III.1)"}
+        for depth in range(1, 5):
+            picked = [by_band[b] for b in chain[:depth + 1] if b in by_band]
+            if picked:
+                cumulative[labels[depth]] = {
+                    "count": sum(b["count"] for b in picked),
+                    "total": round(sum(b["total"] for b in picked), 2)}
+
     return {"columns": {k: _col_letter(v) for k, v in cols.items()},
-            "stats": stats,
+            "stats": stats, "cumulative": cumulative,
             "anchor": anchor.isoformat() if anchor else None,
             "bounds": ({k: v for k, v in _classify_payment(anchor, anchor)["bounds"].items()}
                        if anchor else None),
@@ -1374,6 +1474,35 @@ def selftest() -> int:
         w2.append([500000, start, end, days, 16.0, val])
     w2.append([None, None, None, None, "ИТОГО", round(total, 2)])
     ok_path = os.path.join(tmp, "ok.xlsx"); wb2.save(ok_path)
+
+    # 2b) расчёт ЧЕРЕЗ НОВЫЙ ГОД: часть строк 2024 (366 дн.), часть 2025 (365 дн.).
+    # Верный расчёт по канону F.10 п. 4; при едином делителе на всю таблицу профиль
+    # объявлял бы ошибочными до 40 % строк.
+    wb2b = Workbook(); w2b = wb2b.active; w2b.title = "Через год"
+    w2b.append(["Сумма долга", "Период с", "Период по", "Дней", "Ставка, %", "Пени"])
+    cross_total = 0.0
+    for start, end, days in ((dt.date(2024, 11, 1), dt.date(2024, 11, 30), 30),
+                             (dt.date(2024, 12, 1), dt.date(2024, 12, 31), 31),
+                             (dt.date(2025, 1, 1), dt.date(2025, 1, 31), 31),
+                             (dt.date(2025, 2, 1), dt.date(2025, 2, 28), 28)):
+        div = 366 if start.year == 2024 else 365
+        val = round(2000000.0 * 21.0 / 100 * days / div, 2)
+        cross_total += val
+        w2b.append([2000000.0, start, end, days, 21.0, val])
+    w2b.append([None, None, None, None, "ИТОГО", round(cross_total, 2)])
+    cross_path = os.path.join(tmp, "cross_year.xlsx"); wb2b.save(cross_path)
+
+    name, headers, rows, hdr = load_sheet(cross_path)
+    res = profile_debt_calc(name, headers, rows, hdr, DEFAULT_TOLERANCE)
+    errs = [f for f in res["findings"] if f["severity"] == "error"]
+    if errs or (res.get("formula") or {}).get("id") != "annual/by-row":
+        ok_all = False
+        print(f"SELFTEST [расчёт через новый год] ✗ ожидались 0 ошибок и модель "
+              f"annual/by-row; получено {len(errs)} ошибок, модель "
+              f"{(res.get('formula') or {}).get('id')}")
+    else:
+        print("SELFTEST [расчёт через новый год] ✓ 0 ложных ошибок, знаменатель "
+              "определён по году каждой строки (366 для 2024, 365 для 2025)")
 
     # 3) выписка: скрытые операции (разрыв остатка) + дробление + занижённый итог
     wb3 = Workbook(); w3 = wb3.active; w3.title = "Обороты"

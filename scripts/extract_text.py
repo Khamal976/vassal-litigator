@@ -640,8 +640,17 @@ TABLE_CSV_FULLTEXT_ROWS = 300     # CSV до этого размера отда�
 
 
 def _table_error(error_class: str, retryable: bool, message: str) -> dict:
-    """Единый JSON-отказ табличного извлечения (контракт E.14)."""
-    return {"text": "", "method": "none", "confidence": "low", "pages": 0,
+    """Единый JSON-отказ табличного извлечения (контракт E.14).
+
+    Текст отказа кладётся и в `text`: поле `warnings` не читает ни один приёмник
+    (§5а), а пустой `text` при `error_class` выглядит как «прочитан пустой документ» —
+    ровно тот молчаливый результат, против которого §5а и написан.
+    """
+    body = ("# Таблица не прочитана\n\n"
+            f"## ⚠️ Требует внимания\n\n- {message}\n\n"
+            "> Структурная сводка не сформирована: файл не открылся. "
+            "Разбор `analyze_table.py` по нему невозможен.\n")
+    return {"text": body, "method": "none", "confidence": "low", "pages": 0,
             "needs_vision": False, "error_class": error_class,
             "retryable": retryable, "warnings": [message], "table": None}
 
@@ -787,7 +796,11 @@ def _count_stale_formulas(filepath: str, sheet_names: list) -> dict:
                         continue
                     formulas += 1
                     value = val_row[col] if col < len(val_row) else None
-                    if _cell_empty(value):
+                    # Именно None, а не «пусто»: формула вида =ЕСЛИ(A2="";"";B2*C2)
+                    # легитимно возвращает пустую строку, и таких в шаблонах расчётов
+                    # сотни. Считая их «без сохранённых значений», приём объявлял
+                    # корректный файл недостоверным (поймано проверкой 2026-07-30).
+                    if value is None:
                         stale += 1
                         if len(examples) < 5:
                             examples.append({"sheet": name, "row": n + 1, "col": col + 1,
@@ -1119,7 +1132,10 @@ def extract_xlsx_structure(filepath: str) -> dict:
     return {
         "text": _table_summary_text(table, Path(filepath).name, warnings),
         "method": "table-structure",
-        "confidence": "high",
+        # Формулы без сохранённых значений → прочитанному верить нельзя, и `quality: high`
+        # для такого зеркала прямо запрещён (`ocr.md` §7). Отдавать при этом
+        # `confidence: high` значило бы противоречить самому себе машинным полем.
+        "confidence": "low" if formula_info["stale"] else "high",
         "pages": max(1, len(sheets)),
         "needs_vision": False,
         "warnings": warnings,
@@ -1199,11 +1215,14 @@ def extract_csv_table(filepath: str) -> dict:
 
 def extract_xls_legacy(filepath: str) -> dict:
     """.xls (формат до 2007) — программно не читаем: честный отказ, не «неизвестный формат»."""
-    return {"text": "", "method": "none", "confidence": "low", "pages": 0,
-            "needs_vision": False, "table": None,
-            "warnings": ["Формат .xls (Excel до 2007) не поддерживается: откройте файл и "
-                         "сохраните как .xlsx, затем повторите приём. Библиотеки xlrd в "
-                         "среде нет by-design — новый формат покрывает все боевые случаи"]}
+    message = ("Формат .xls (Excel до 2007) не поддерживается: откройте файл и сохраните "
+               "как .xlsx, затем повторите приём. Библиотеки xlrd в среде нет by-design — "
+               "новый формат покрывает все боевые случаи")
+    return {"text": ("# Таблица не прочитана\n\n## ⚠️ Требует внимания\n\n"
+                     f"- {message}\n"),
+            "method": "none", "confidence": "low", "pages": 0,
+            "needs_vision": False, "table": None, "error_class": None,
+            "retryable": False, "warnings": [message]}
 
 
 def extract_image(filepath: str) -> dict:
