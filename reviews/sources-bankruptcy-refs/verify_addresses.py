@@ -158,6 +158,10 @@ def check(path, acts, with_punkt=False):
             # а не внутри пункта Пленума: у норм своя нумерация абзацев.
             if re.search(r'(?:ст\.|стать)\w*\s*[\d.]+[^.]{0,40}$', nbefore[:m.start()]):
                 continue
+            # Между адресом и цитатой назван другой источник — значит, адрес
+            # относится к предыдущей цитате в том же предложении, а не к этой.
+            if re.search(r'(?:ст\.|стать)\w*\s*\d', nbefore[m.end():]):
+                continue
             addr = m                      # ближайший к цитате адрес
         pm = None
         for m in PUNKT_RE.finditer(nbefore):
