@@ -33,15 +33,26 @@ def norm(s):
     return s.strip().lower()
 
 
+# Хвост файла источника, куда fetch_source.py складывает примечания редакции
+# КонсультантПлюс. Это НЕ текст акта: по ним датируются редакции, но цитировать
+# их как норму нельзя. В корпус проверки они не входят — иначе цитата из
+# примечания прошла бы сверку как дословная цитата самого акта.
+NOTES_MARKER = 'ВРЕЗКИ КонсультантПлюс'
+
+
 def load_corpus():
     parts, names = [], []
     for pattern in CORPUS_GLOBS:
         for path in sorted(glob.glob(pattern)):
             try:
-                parts.append(norm(open(path, encoding='utf-8').read()))
-                names.append(os.path.relpath(path, REF))
+                text = open(path, encoding='utf-8').read()
             except OSError:
-                pass
+                continue
+            cut = text.find(NOTES_MARKER)
+            if cut != -1:
+                text = text[:cut]
+            parts.append(norm(text))
+            names.append(os.path.relpath(path, REF))
     return parts, names
 
 
