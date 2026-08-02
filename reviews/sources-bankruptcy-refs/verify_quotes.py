@@ -37,7 +37,17 @@ def norm(s):
 # КонсультантПлюс. Это НЕ текст акта: по ним датируются редакции, но цитировать
 # их как норму нельзя. В корпус проверки они не входят — иначе цитата из
 # примечания прошла бы сверку как дословная цитата самого акта.
-NOTES_MARKER = 'ВРЕЗКИ КонсультантПлюс'
+#
+# Маркер ищется ТОЛЬКО с начала строки. Блок ПРОВЕНАНС сам упоминает его в
+# тексте («…вынесены в конец файла под заголовок «ВРЕЗКИ КонсультантПлюс»»),
+# и поиск подстрокой обрезал такой файл на девятой строке: акт целиком выпадал
+# из корпуса, а его дословные цитаты объявлялись ненайденными.
+NOTES_MARKER = re.compile(r'(?m)^ВРЕЗКИ КонсультантПлюс')
+
+
+def cut_notes(text):
+    hits = list(NOTES_MARKER.finditer(text))
+    return text[:hits[-1].start()] if hits else text
 
 
 def load_corpus():
@@ -48,10 +58,7 @@ def load_corpus():
                 text = open(path, encoding='utf-8').read()
             except OSError:
                 continue
-            cut = text.find(NOTES_MARKER)
-            if cut != -1:
-                text = text[:cut]
-            parts.append(norm(text))
+            parts.append(norm(cut_notes(text)))
             names.append(os.path.relpath(path, REF))
     return parts, names
 

@@ -18,7 +18,7 @@
     python fetch_source.py <URL> <выходной-файл.txt> --reason "почему добрано"
     python fetch_source.py <URL> --probe        # только посмотреть, не писать
 """
-import sys, os, re, ssl, html, time, urllib.request, urllib.parse, argparse
+import sys, os, re, ssl, html, time, datetime, urllib.request, urllib.parse, argparse
 from html.parser import HTMLParser
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -228,7 +228,10 @@ def main():
     ap.add_argument("--reason", default="")
     ap.add_argument("--title", default="")
     ap.add_argument("--probe", action="store_true")
-    ap.add_argument("--date", default="2026-07-31")
+    # Дата добора берётся у системы. Прежде здесь стояла константа дня, когда
+    # скрипт писался: каждый следующий добор молча помечался задним числом,
+    # а ПРОВЕНАНС — единственное, чем файл корпуса отличается от текста ниоткуда.
+    ap.add_argument("--date", default=datetime.date.today().isoformat())
     a = ap.parse_args()
 
     src = fetch(a.url)
