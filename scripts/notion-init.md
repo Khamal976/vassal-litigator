@@ -72,7 +72,7 @@ Cases ссылается на Judges и (с этапа 6.2b) на Counterparties
   "title": "Cases (vassal-litigator)",
   "description": "Реестр всех дел, синхронизируется из локального .vassal/case.yaml каждого дела",
   "parent": { "type": "page_id", "page_id": "<id-родительской-страницы>" },
-  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Примирение':purple, 'Завершено (мировое)':green, 'Завершено (отказ)':gray, 'Исполнение':green, 'Решение вступило в силу':default, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Оппонент\" RELATION('<counterparties-data-source-id>') COMMENT 'Опционально -- убрать если шаг 2 пропущен', \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
+  "schema": "CREATE TABLE (\"Номер дела\" TITLE, \"Суд\" SELECT('АС Красноярского края':blue, 'АС Москвы':orange, 'АС СПб':green, 'СОЮ':gray, '3-й ААС':purple, 'АС МО':red), \"Наш клиент\" RICH_TEXT, \"Истец\" RICH_TEXT, \"Ответчик\" RICH_TEXT, \"Наша роль\" SELECT('истец':blue, 'ответчик':red, 'третье лицо':gray, 'заявитель':green, 'заинтересованное лицо':orange), \"Стадия\" SELECT('Досудебная':gray, '1 инстанция':blue, '1 инстанция (приостановлено)':yellow, 'Апелляция':orange, 'Кассация':red, 'Примирение':purple, 'Завершено (мировое)':green, 'Завершено (отказ)':gray, 'Исполнение':green, 'Решение вступило в силу':default, 'Закрыто':default), \"Статус\" SELECT('active':blue, 'paused':yellow, 'closed':gray, 'won':green, 'lost':red) COMMENT 'Ручное поле -- не перезаписывается sync', \"Следующее заседание\" DATE, \"Судья\" RELATION('<judges-data-source-id>'), \"Оппонент\" RELATION('<counterparties-data-source-id>') COMMENT 'Опционально -- убрать если шаг 2 пропущен', \"Обособленный спор\" RICH_TEXT COMMENT 'B.18b: case.dispute.id -- первичный ключ карточки при стиле «папка на обособленный спор»; пусто для основного дела', \"Путь к папке\" RICH_TEXT COMMENT 'Хранит %OneDrive%\\\\<rel-path> для кросс-машинной кликабельности через копипаст в Explorer', \"Last sync\" DATE)"
 }
 ```
 
@@ -158,6 +158,7 @@ notion:
       next_hearing: "Следующее заседание"
       judge_relation: "Судья"
       opponent_relation: "Оппонент"
+      dispute_id: "Обособленный спор"
       folder_url: "Путь к папке"
       last_sync: "Last sync"
     judges:

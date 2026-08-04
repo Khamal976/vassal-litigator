@@ -968,14 +968,16 @@ def main():
 
     # если в .md шапки нет, а case есть — минимальная сборка (best-effort)
     if not header_lines and case:
-        header_lines = _header_from_case(case, doc_type)
+        # raw_type: TYPE_MAP схлопывает appeal/cassation/nadzor в «жалоба», а адресат
+        # у них разный -- сырое значение нужно для выбора target_court.
+        header_lines = _header_from_case(case, doc_type, args.type)
 
     render(header_lines, blocks, args.out_docx, case=case, doc_type=doc_type)
     sys.stderr.write("format_doc: готово -> %s (тип: %s, блоков: %d)\n"
                      % (args.out_docx, doc_type, len(blocks)))
 
 
-def _header_from_case(case, doc_type):
+def _header_from_case(case, doc_type, raw_type=None):
     """Минимальная сборка шапки из case.yaml, когда в .md её нет (best-effort).
 
     Вариант шапки зависит от ТИПА документа (style-spec §2 «Шапка — варианты»):
@@ -987,18 +989,168 @@ def _header_from_case(case, doc_type):
     собирала ровно те два элемента, которых в ней быть не должно.
     """
     c = case.get("case", case) if isinstance(case, dict) else {}
+    # Битая карточка (`case:` без тела, скаляр вместо блока) не должна ронять печать:
+    # без шапки документ ещё можно оформить, с traceback — нельзя.
+    if not isinstance(c, dict):
+        sys.stderr.write("format_doc: case.yaml не похож на карточку дела "
+                         "(блок case пуст или не является отображением) -- "
+                         "шапка берётся только из .md\n")
+        return []
 
     if doc_type == "претензия":
         return _pretrial_header_from_case(c)
 
+    # Карта доводов -- аналитический артефакт, а не обращение в суд: реквизитного
+    # блока заявителя у неё нет (style-spec её варианта шапки не задаёт вовсе).
+    if doc_type == "карта-доводов":
+        court = c.get("court", "")
+        number = c.get("number", "")
+        out = []
+        if court:
+            out.append("В %s" % court)
+        if number:
+            out.append("Дело №%s" % number)
+        return out
+
     lines = []
-    court = c.get("court", "")
+    dispute = c.get("dispute") if isinstance(c.get("dispute"), dict) else {}
+
+    # --- Блок 1: суд ---
+    if doc_type == "жалоба":
+        # F.24. Шапка жалобы двусоставна: «В {адресат} ⏎ через {суд, вынесший акт}».
+        # Отсутствие «через…» style-spec относит к КРИТИЧЕСКИМ дефектам, а адресата
+        # взять неоткуда, кроме appeal/cassation.target_court — выдумывать его нельзя.
+        target = _target_court_from_case(c, raw_type)
+        # «Через» -- суд, ПРИНЯВШИЙ акт. Если спор вёл другой суд (обособленный спор
+        # вне основного дела), это он, а не case.court.
+        through = dispute.get("court") or c.get("court", "")
+        if not target:
+            sys.stderr.write(
+                "format_doc: жалоба -- в case.yaml нет суда-адресата "
+                "(appeal.target_court / cassation.target_court), шапка не собрана "
+                "(задай её в .md)\n")
+            return []
+        lines.append("В %s" % target)
+        if through and through.strip() == target.strip():
+            sys.stderr.write(
+                "format_doc: жалоба -- суд-адресат и суд «через ...» совпадают (%s); "
+                "проверь target_court в case.yaml\n" % target)
+        if through:
+            lines.append("через %s" % through)
+        else:
+            sys.stderr.write(
+                "format_doc: жалоба -- не заполнен case.court, в шапке нет строки "
+                "«через ...» (style-spec относит это к критическим дефектам)\n")
+    else:
+        # B.18b: обособленный спор может рассматривать другой суд, чем дело
+        # (пример -- субсидиарная ответственность вне дела о банкротстве).
+        court = dispute.get("court") or c.get("court", "")
+        if court:
+            lines.append("В %s" % court)
+
+    # --- Блок 2: номер дела ---
     number = c.get("number", "")
-    if court:
-        lines.append("В %s" % court)
     if number:
         lines.append("Дело №%s" % number)
+
+    # --- Блок 3: от заявителя (F.24) ---
+    # style-spec требует три абзаца: суд -- номер дела -- «от {заявитель} ⏎ {адрес}».
+    # До v9 собирались только первые два, то есть fallback-шапка была заведомо неполной
+    # для КАЖДОГО типа, кроме претензии.
+    lines.extend(_applicant_block_from_case(c))
+
     return [l for l in lines if l]
+
+
+def _target_court_from_case(c, raw_type=None):
+    """Суд-адресат жалобы -- по ТИПУ жалобы, а не по «приоритету инстанции».
+
+    TYPE_MAP схлопывает appeal / cassation / nadzor в один тип «жалоба», поэтому
+    сырое значение --type передаётся сюда отдельно. Выбор по приоритету был бы
+    гаданием: после отмены с направлением на новое рассмотрение заполнены оба
+    поля, а подаётся снова апелляционная жалоба.
+    """
+    raw = (raw_type or "").strip().lower()
+    if raw in ("nadzor", "надзорная"):
+        sys.stderr.write("format_doc: надзорная жалоба -- поля для суда-адресата "
+                         "(Президиум ВС РФ) в схеме нет, шапка не собрана "
+                         "(задай её в .md)\n")
+        return ""
+
+    order = ("appeal", "cassation")
+    if raw in ("cassation", "кассационная"):
+        order = ("cassation", "appeal")
+    elif raw not in ("appeal", "апелляционная"):
+        # Тип жалобы не назван (`--type жалоба`): выбрать за юриста инстанцию нельзя.
+        filled = [b for b in ("appeal", "cassation")
+                  if isinstance(c.get(b), dict) and c[b].get("target_court")]
+        if len(filled) > 1:
+            sys.stderr.write(
+                "format_doc: заполнены и appeal.target_court, и cassation.target_court, "
+                "а тип жалобы не уточнён -- запусти с --type appeal либо --type cassation; "
+                "шапка не собрана\n")
+            return ""
+
+    for block in order:
+        b = c.get(block)
+        if isinstance(b, dict) and b.get("target_court"):
+            return str(b["target_court"])
+    return ""
+
+
+def _applicant_block_from_case(c):
+    """Блок «от {заявитель} ⏎ {адрес}» -- наш клиент как сторона, не представитель.
+
+    Источник -- сторона, на которую указывает our_client.party_id. case.representative
+    (наш юрист) в шапку НЕ идёт: он подписывает документ, а исходит документ от стороны.
+
+    B.18b: если карточка описывает обособленный спор, наш клиент обязан присутствовать
+    среди его сторон -- иначе карточка несогласованна, и об этом надо сказать, а не
+    молча взять сторону из основного дела.
+    """
+    parties = [p for p in (c.get("parties") or []) if isinstance(p, dict)]
+    our_id = ((c.get("our_client") or {}).get("party_id")
+              if isinstance(c.get("our_client"), dict) else None)
+    if not our_id:
+        sys.stderr.write("format_doc: не определён our_client.party_id -- "
+                         "блок «от ...» в шапку не попал\n")
+        return []
+
+    applicant = next((p for p in parties if p.get("party_id") == our_id), None)
+    if applicant is None:
+        sys.stderr.write("format_doc: our_client.party_id=%s не найден в parties[] -- "
+                         "блок «от ...» в шапку не попал\n" % our_id)
+        return []
+
+    dispute = c.get("dispute") if isinstance(c.get("dispute"), dict) else {}
+    if dispute.get("is_separate"):
+        known = [dispute.get("applicant_party_id"), dispute.get("respondent_party_id")]
+        third = dispute.get("third_party_ids") or []
+        # Строка вместо списка (частая опечатка в YAML) дала бы посимвольный разбор
+        # и ложную тревогу -- поэтому нормализуем.
+        known += [third] if isinstance(third, str) else list(third)
+        if not any(known):
+            sys.stderr.write(
+                "format_doc: карточка помечена как обособленный спор (%s), но стороны "
+                "спора не заполнены -- шапка собрана по our_client\n"
+                % (dispute.get("id") or "без id"))
+        elif our_id not in known:
+            sys.stderr.write(
+                "format_doc: our_client.party_id=%s не числится стороной обособленного "
+                "спора %s -- проверь карточку (шапка собрана по our_client)\n"
+                % (our_id, dispute.get("id") or "?"))
+
+    name = (applicant.get("name") or applicant.get("short_name") or "").strip()
+    if not name:
+        sys.stderr.write("format_doc: у стороны %s не заполнены ни name, ни short_name -- "
+                         "блок «от ...» в шапку не попал (style-spec требует трёх блоков)\n"
+                         % our_id)
+        return []
+    out = ["от %s" % name]
+    addr = applicant.get("address")
+    if addr:
+        out.append(str(addr))
+    return out
 
 
 def _pretrial_header_from_case(c):
@@ -1031,11 +1183,13 @@ def _pretrial_header_from_case(c):
 
     lines = []
     for label, party in (("Кому:", addressee), ("От:", sender)):
-        if not party:
-            continue
-        name = party.get("name") or party.get("short_name")
+        name = (party.get("name") or party.get("short_name") or "").strip() if party else ""
         if not name:
-            continue
+            # Претензия без адресата или без отправителя -- это не «шапка на один блок»,
+            # а несоблюдённый досудебный порядок. Лучше отдать шапку в .md целиком.
+            sys.stderr.write("format_doc: претензия -- у стороны «%s» не заполнено "
+                             "наименование, шапка не собрана (задай её в .md)\n" % label)
+            return []
         lines.append("%s %s" % (label, name))
         addr = party.get("address")
         if addr:

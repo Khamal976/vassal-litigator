@@ -175,7 +175,7 @@
   | `enforcement-adjustment` | категория → код процесса |
   | позже: `appeal` / `cassation` | §3.1 (сроки обжалования по профилю) |
 
-  ⚠ **`settlement` роутер не читает вовсе** — ни одной секции, ни в одной фазе. В банкротный трек он входит прямыми адресами: ст. 61.21 → [`bankruptcy-subsidiary-liability.md` §10.10](../skills/build-position/references/bankruptcy-subsidiary-liability.md) (роль **C**) и [`bankruptcy-damages.md` §10.6](../skills/build-position/references/bankruptcy-damages.md) (роль **E**). Значит правка §3.5 до него не доходит **никогда** — только руками.
+  ⚠ **`settlement` роутер не читает вовсе** — ни одной секции, ни в одной фазе. В банкротный трек он входит прямыми адресами, и с 2026-08-04 их **три**: путь «(д)» — ст. 61.21 → [`bankruptcy-subsidiary-liability.md` §10.10](../skills/build-position/references/bankruptcy-subsidiary-liability.md) (роль **C**) и [`bankruptcy-damages.md` §10.6](../skills/build-position/references/bankruptcy-damages.md) (роль **E**); путь «(е)» — убытки с арбитражного управляющего по п. 4 ст. 20.4 → [`bankruptcy-damages.md` §9, §9.6, §11](../skills/build-position/references/bankruptcy-damages.md) (роль **E**), там ст. 61.21 **не применяется**. Значит правка §3.5 до него не доходит **никогда** — только руками.
 
   ⚠ **§3.5 до захода интеграции не читал ни один скилл** — ссылки шли только снизу вверх, из самих справочников. Класс дефекта — F.14 «декларация без потребителя» (`shared/conventions.md`). Шаг 1.1 в `build-position` заведён именно поэтому.
 
