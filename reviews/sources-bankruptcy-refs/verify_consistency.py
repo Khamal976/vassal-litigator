@@ -215,7 +215,18 @@ AWARE = re.compile(
     r'расхожд\w*|расход\w*тся|коллиз|но\s+см\.|см\.\s+врезк|против\s+нормы|\bшире\b|\bуже\b|'
     r'ýже|уже\s+норм|по\s+букве|резервн|'
     r'за\s+исключением[^.]{0,40}(?:п\.|ст\.|пункт|стать)|'
-    r'не\s+путать|прежн\w+\s+редакц|прямого\s+разрешения|зеркальн|'
+    r'не\s+путать|прежн\w+\s+(?:редакц|правил)|прямого\s+разрешения|зеркальн|'
+    # Словарь, которым разрешение коллизии написано ИМЕННО В ЭТОМ проекте.
+    # Врезка «Как это соотносится с прежним правилом справочников» разбирает
+    # столкновение п. 69(1) и п. 14 Обзора на четыре предложения — и всё равно
+    # уходила в «врозь»: шаблон ждал «прежнюю РЕДАКЦИЮ», а написано «прежним
+    # ПРАВИЛОМ». Маркеры ниже указывают на соотношение актов, а не на важность
+    # места. Проверено прогоном: по всем пяти банкротным справочникам они
+    # срабатывают только на двух врезках об этой коллизии, в остальных четырёх
+    # файлах ни одна цифра не сдвинулась.
+    r'как\s+(?:это\s+)?соотносится|как\s+это\s+разрешать|не\s+отменил|'
+    r'замени\w+\s+качественн\w+\s+запрет|выше[^.]{0,30}по\s+силе|'
+    r'читается\s+только\s+вместе\s+с|'
     r'ошибочн\w*\s+(?:была|было|редакц)|устарел|не\s+переноситс|переносить\s+нельзя|'
     r'сужен\w*\s+до|адресован\s+(?:субсидиарн|друг)', re.I)
 
@@ -231,6 +242,20 @@ SKIP_LINE = re.compile(r'^\s*(?:>\s*)?\|?\s*[А-ЯA-Z]?\.?\d{0,2}\s*(?:✅|⏳|�
                        r'\*\*Внесено:\*\*|Внесено:\s|хвост\s+закрыт', re.I)
 
 QUOTE = re.compile(r'«[^»]{20,}»')
+
+# Приложения — это реестры (норм, актов, собственных выводов, пробелов), а не
+# правила: их строки пересказывают правило задним числом и в паре друг с другом
+# дают ложное противоречие. Глухо пропускать их НЕЛЬЗЯ — пара «реестр говорит
+# „открытый вопрос“ против тела, где стоит утверждение» это как раз сигнал, и
+# в этом заходе он дал две находки. Поэтому в отдельный класс уходят только
+# пары, у которых В РЕЕСТРЕ ОБЕ стороны.
+#
+# SKIP_LINE здесь не годится: он проверяется построчно, а приложение — это
+# состояние, которое держится до следующего заголовка тела. Подзаголовки вида
+# «### А.1.» и «### В.4.» не сбрасывают его и не открывают: открывает только
+# «## Приложение», закрывает — «## §N».
+APPX_OPEN = re.compile(r'^\s*#{1,3}\s*Приложение', re.I)
+APPX_CLOSE = re.compile(r'^\s*#{1,3}\s*§')
 
 
 def polarity(frag):
@@ -285,13 +310,17 @@ def fragments(path):
     без этого 44 % ячеек с правилами оставались без нормы, а часть получала
     норму соседней ячейки — то есть правило приписывалось не той норме."""
     out = []
-    in_fence = False
+    in_fence = in_appx = False
     with open(path, encoding='utf-8') as f:
         for i, ln in enumerate(f.read().split('\n')):
             s = ln.strip()
             if s.startswith('```'):
                 in_fence = not in_fence
                 continue
+            if APPX_OPEN.match(ln):
+                in_appx = True
+            elif APPX_CLOSE.match(ln):
+                in_appx = False
             if in_fence or len(s) < 25 or SKIP_LINE.search(ln):
                 continue
             is_table = s.startswith('|')
@@ -302,7 +331,7 @@ def fragments(path):
                 for part in SENT.split(cell):
                     part = part.strip(' *|')
                     if len(part) >= 25:
-                        out.append((i + 1, pos, part, row_keys))
+                        out.append((i + 1, pos, part, row_keys, in_appx))
                         pos += 1
     if in_fence:
         print('   ⚠ код-фенс в файле не закрыт — часть текста не проверена')
@@ -318,7 +347,7 @@ def check(path, show_all=False, loose=False, with_terms=False):
     index = {}
     n_norm = n_pol = n_both = 0
     orphan = []                     # правило есть, норма не названа — машина бессильна
-    for line, pos, frag, row_keys in frags:
+    for line, pos, frag, row_keys, in_appx in frags:
         pol, trm = polarity(frag), terms(frag)
         keys = norm_keys(frag, loose) | row_keys
         if keys:
@@ -332,9 +361,9 @@ def check(path, show_all=False, loose=False, with_terms=False):
             continue
         n_both += 1
         for key in keys:
-            index.setdefault(key, []).append((line, pos, frag, pol, trm))
+            index.setdefault(key, []).append((line, pos, frag, pol, trm, in_appx))
 
-    silent, aware, seen = [], [], set()
+    silent, aware, regs, seen = [], [], [], set()
     for key in sorted(index):
         items = index[key]
         if len(items) < 2:
@@ -345,8 +374,8 @@ def check(path, show_all=False, loose=False, with_terms=False):
             continue
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
-                la, pia, fa, pa, ta = items[i]
-                lb, pib, fb, pb, tb = items[j]
+                la, pia, fa, pa, ta, aa = items[i]
+                lb, pib, fb, pb, tb, ab = items[j]
                 if (la, pia) == (lb, pib) or fa == fb:
                     continue
                 axes = []
@@ -365,7 +394,12 @@ def check(path, show_all=False, loose=False, with_terms=False):
                     continue
                 seen.add(sig)
                 rec = (key, la, fa, lb, fb, sorted(set(axes)))
-                (aware if (AWARE.search(fa) or AWARE.search(fb)) else silent).append(rec)
+                if AWARE.search(fa) or AWARE.search(fb):
+                    aware.append(rec)
+                elif aa and ab:          # обе стороны — строки приложений-реестров
+                    regs.append(rec)
+                else:
+                    silent.append(rec)
 
     def show(recs, title):
         print()
@@ -390,6 +424,8 @@ def check(path, show_all=False, loose=False, with_terms=False):
     far = [r for r in silent if abs(r[1] - r[3]) >= 3]
     if far:
         show(far, '- - - ПРАВИЛА В РАЗНЫХ МЕСТАХ ФАЙЛА, КОНФЛИКТ НЕ ОГОВОРЁН - - -')
+    if regs:
+        show(regs, '- - - обе стороны в реестрах приложений (сверять при ревизии) - - -')
     if near and show_all:
         show(near, '- - - правила рядом (обычно разведение «к X да, к Y нет») - - -')
     if aware and show_all:
@@ -400,8 +436,8 @@ def check(path, show_all=False, loose=False, with_terms=False):
     # Сравнимо около 5 % текста справочника, и об этом надо говорить вслух.
     print()
     print('-' * 72)
-    print('ИТОГ %s: врозь %d · рядом %d · оговорено %d%s'
-          % (os.path.basename(path), len(far), len(near), len(aware),
+    print('ИТОГ %s: врозь %d · реестры %d · рядом %d · оговорено %d%s'
+          % (os.path.basename(path), len(far), len(regs), len(near), len(aware),
              '' if show_all else ' (два последних — --all)'))
     print('   охват: фрагментов %d · с нормой %d · с правилом %d · сравнивалось %d (%.0f %%)'
           % (len(frags), n_norm, n_pol, n_both, 100.0 * n_both / max(1, len(frags))))
