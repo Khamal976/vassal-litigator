@@ -378,7 +378,7 @@
 
 - **Скилл-потребитель:** [`legal-review`](../SKILL.md) — блок **c** (пресекательные сроки), маршрут через [`shared/category-routing.md §3.1`](../../../shared/category-routing.md) + банкротный под-роутер §4.
 - **[`build-position/references/bankruptcy-damages.md`](../../build-position/references/bankruptcy-damages.md)** — роль **E** в `category-routing.md §3.5`. Раздел §3 этого файла «Срок по требованию о возмещении убытков» — сокращённая версия его **§8**; за дословными цитатами норм и разбором отличий от субсидиарки (**§8.7**) идти туда.
-- **[`build-position/references/bankruptcy-subsidiary-liability.md`](../../build-position/references/bankruptcy-subsidiary-liability.md)** (роль C) — субсидиарная ответственность; врезка в его §8 держит то же разграничение с другой стороны.
+- **[`build-position/references/bankruptcy-subsidiary-liability.md`](../../build-position/references/bankruptcy-subsidiary-liability.md)** (роль C) — субсидиарная ответственность; врезка в его **§9.8** держит то же разграничение с другой стороны. Там же **§9.4** — два разных срока ст. 61.14 (п. 5 и п. 6), которые нельзя смешивать.
 - **[`build-position/references/bankruptcy-transaction-challenge.md`](../../build-position/references/bankruptcy-transaction-challenge.md)** (роль B) — §15 «Исковая давность» по оспариванию сделок: отсчёт от осведомлённости **первоначально утверждённого** управляющего, смена управляющего срок не перезапускает.
 - **[jurisdiction-reference.md](jurisdiction-reference.md)** — форум по каждому маршруту требования об убытках (после завершения процедуры специальной нормы нет).
 - **[filing-fees.md](filing-fees.md)** — пошлина: в деле о банкротстве 50 %, вне дела полная.
