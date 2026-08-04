@@ -191,7 +191,7 @@
 
 ### B.4. Мировое соглашение в банкротстве (гл. VIII ФЗ-127) ⏳ **Пост-MVP settlement**
 
-**Где:** [skills/settlement/SKILL.md](skills/settlement/SKILL.md) → фаза 0 п. 6 (4-вариантный диалог про банкротство, вариант (а) -- блокировка); [skills/settlement/references/legal-basis.md](skills/settlement/references/legal-basis.md) → § 6 (ФЗ-127); [skills/settlement/references/case-law.md](skills/settlement/references/case-law.md) → § 6 (ИП ВАС № 97 от 20.12.2005 -- зарезервирован).
+**Где:** [skills/settlement/SKILL.md](skills/settlement/SKILL.md) → фаза 0 п. 6 (5-вариантный диалог про банкротство; вариант «(д)» — соглашение по ст. 61.21 — **в охвате, к B.4 не относится**, вариант (а) -- блокировка); [skills/settlement/references/legal-basis.md](skills/settlement/references/legal-basis.md) → § 6 (ФЗ-127); [skills/settlement/references/case-law.md](skills/settlement/references/case-law.md) → § 6 (ИП ВАС № 97 от 20.12.2005 -- зарезервирован).
 
 **Что:** мировое соглашение в деле о банкротстве, когда процедура **уже введена** (наблюдение / финансовое оздоровление / внешнее управление / конкурсное / реструктуризация / реализация имущества), -- регулируется специально (гл. VIII ФЗ-127, ст. 150-167). Особенности: собрание кредиторов; голосование классов; согласие залоговых кредиторов; специальные основания отказа в утверждении судом (ст. 160 ФЗ-127); особый порядок расторжения (ст. 164-167 ФЗ-127). MVP `settlement` это **не покрывает** -- в фазе 0 блокируется с предупреждением.
 
